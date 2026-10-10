@@ -11,11 +11,10 @@ jobs:
   join:
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    env:
-      SCRATCH: ${{ runner.temp }}
     steps:
       - name: 'WinPilot: join Tailscale'
         env:
+          SCRATCH: ${{ runner.temp }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           exec > >(tee -a "$SCRATCH/join.out") 2>&1
@@ -116,6 +115,7 @@ jobs:
       - name: 'Publish redacted result'
         if: always()
         env:
+          SCRATCH: ${{ runner.temp }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
