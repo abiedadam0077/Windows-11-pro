@@ -4,7 +4,7 @@
 Usage: patch_android.py <path-to-android-dir>
 
 - Copies android_overrides/AndroidManifest.xml (INTERNET, notifications, OAuth intent filter).
-- Sets minSdk to 23 (required by flutter_secure_storage / app_links on current plugin versions).
+- Sets compileSdk to 36 (plugin AARs require it) and minSdk to 23 (required by flutter_secure_storage / app_links on current plugin versions).
 - Enables core library desugaring (flutter_local_notifications 17 requires it on Android).
 
 Fails loudly if a Gradle file does not have the expected shape, so CI never
@@ -17,6 +17,8 @@ import sys
 
 DESUGAR_LIB = 'com.android.tools:desugar_jdk_libs:2.1.4'
 MIN_SDK = 23
+# Current plugin AARs (file_picker, flutter_plugin_android_lifecycle) are compiled against API 36.
+COMPILE_SDK = 36
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
@@ -36,6 +38,9 @@ def patch_gradle(android_dir: pathlib.Path) -> None:
         text, n = re.subn(r'minSdk\s*=\s*flutter\.minSdkVersion', f'minSdk = {MIN_SDK}', text)
         if n != 1:
             sys.exit('minSdk assignment not found in build.gradle.kts')
+        text, n = re.subn(r'compileSdk\s*=\s*flutter\.compileSdkVersion', f'compileSdk = {COMPILE_SDK}', text)
+        if n != 1:
+            sys.exit('compileSdk assignment not found in build.gradle.kts')
         text, n = re.subn(r'(compileOptions\s*\{)',
                           r'\1\n        isCoreLibraryDesugaringEnabled = true', text, count=1)
         if n != 1:
@@ -46,6 +51,9 @@ def patch_gradle(android_dir: pathlib.Path) -> None:
         text, n = re.subn(r'minSdkVersion\s+flutter\.minSdkVersion', f'minSdkVersion {MIN_SDK}', text)
         if n != 1:
             sys.exit('minSdkVersion not found in build.gradle')
+        text, n = re.subn(r'compileSdkVersion\s+flutter\.compileSdkVersion', f'compileSdkVersion {COMPILE_SDK}', text)
+        if n != 1:
+            sys.exit('compileSdkVersion not found in build.gradle')
         text, n = re.subn(r'(compileOptions\s*\{)',
                           r'\1\n        coreLibraryDesugaringEnabled true', text, count=1)
         if n != 1:
