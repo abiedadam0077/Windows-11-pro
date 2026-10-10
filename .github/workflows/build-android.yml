@@ -40,6 +40,11 @@ jobs:
       - name: Check i18n keys
         run: python3 tool/check_i18n_keys.py
 
+      - name: Check workflow files
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 tool/check_workflows.py
+
       - name: Resolve dependencies
         run: flutter pub get
 

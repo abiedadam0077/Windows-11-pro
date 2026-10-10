@@ -13,10 +13,12 @@ import '../../state/settings_state.dart';
 import '../../ui/widgets/brand_widgets.dart';
 import '../../ui/widgets/feedback_widgets.dart';
 
-/// Writes the per-repository Actions secrets from inside the app.
+/// Writes the three repository Actions secrets the VM workflow reads.
 ///
-/// Secret values are sealed on-device and sent to GitHub; they are never
-/// stored by the app, written to logs, or placed in URLs.
+/// Values are sealed on the device and sent to GitHub. The app keeps them only
+/// in the text fields of this screen; they are never logged, put in URLs, or
+/// saved to local storage. Each secret is confirmed by GitHub before it is
+/// shown as saved.
 class SecretsPage extends ConsumerStatefulWidget {
   const SecretsPage({super.key});
 
@@ -24,17 +26,29 @@ class SecretsPage extends ConsumerStatefulWidget {
   ConsumerState<SecretsPage> createState() => _SecretsPageState();
 }
 
-enum _SecretState { idle, saving, saved, failed }
+enum SecretSaveState { idle, saving, saved, failed }
+
+const _kWinPassword = 'WINPILOT_WIN_PASSWORD';
+const _kBackupPassword = 'BACKUP_PASSWORD';
+const _kAccessPassword = 'ACCESS_PASSWORD';
 
 class _SecretsPageState extends ConsumerState<SecretsPage> {
   late final TextEditingController _user;
-  final _password = TextEditingController();
-  final _backup = TextEditingController();
-  bool _showPassword = false;
-  bool _showBackup = false;
-  _SecretState _winState = _SecretState.idle;
-  _SecretState _backupState = _SecretState.idle;
+  final _winPw = TextEditingController();
+  final _backupPw = TextEditingController();
+  final _accessPw = TextEditingController();
+  final _shown = <String, bool>{
+    _kWinPassword: false,
+    _kBackupPassword: false,
+    _kAccessPassword: false,
+  };
+  final _state = <String, SecretSaveState>{
+    _kWinPassword: SecretSaveState.idle,
+    _kBackupPassword: SecretSaveState.idle,
+    _kAccessPassword: SecretSaveState.idle,
+  };
   String? _error;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -45,92 +59,94 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
   @override
   void dispose() {
     _user.dispose();
-    _password.dispose();
-    _backup.dispose();
+    _winPw.dispose();
+    _backupPw.dispose();
+    _accessPw.dispose();
     super.dispose();
   }
 
-  String? get _repoFullName => ref.read(settingsProvider).defaultRepo;
+  TextEditingController _controller(String name) => switch (name) {
+        _kWinPassword => _winPw,
+        _kBackupPassword => _backupPw,
+        _ => _accessPw,
+      };
+
+  /// Returns the localized problem with the current input, or null when ready.
+  String? _validate(AppStrings s) {
+    final repo = ref.read(settingsProvider).defaultRepo;
+    if (repo == null || !repo.contains('/')) return s.t('secrets_need_repo');
+    if (!Validators.isValidWindowsUsername(_user.text.trim())) {
+      return s.t('secrets_username_invalid');
+    }
+    if (PasswordPolicy.violations(_winPw.text, username: _user.text.trim()).isNotEmpty) {
+      return s.t('secrets_password_weak');
+    }
+    if (PasswordPolicy.violations(_backupPw.text).isNotEmpty) {
+      return s.t('secrets_backup_weak');
+    }
+    if (PasswordPolicy.violations(_accessPw.text).isNotEmpty) {
+      return s.t('secrets_access_weak');
+    }
+    return null;
+  }
 
   Future<void> _save(AppStrings s) async {
-    final repo = _repoFullName;
-    if (repo == null || !repo.contains('/')) {
-      setState(() => _error = s.t('secrets_need_repo'));
+    final problem = _validate(s);
+    if (problem != null) {
+      setState(() => _error = problem);
       return;
     }
-    final username = _user.text.trim();
-    final winPw = _password.text;
-    final backupPw = _backup.text;
-    if (!Validators.isValidWindowsUsername(username)) {
-      setState(() => _error = s.t('secrets_username_invalid'));
-      return;
-    }
-    if (PasswordPolicy.violations(winPw, username: username).isNotEmpty) {
-      setState(() => _error = s.t('secrets_password_weak'));
-      return;
-    }
-    if (PasswordPolicy.violations(backupPw).isNotEmpty) {
-      setState(() => _error = s.t('secrets_backup_weak'));
-      return;
-    }
-    final parts = repo.split('/');
+    final parts = ref.read(settingsProvider).defaultRepo!.split('/');
+    final owner = parts.first;
+    final repo = parts.sublist(1).join('/');
     final writer = GitHubSecretsWriter(ref.read(githubApiProvider));
     setState(() {
+      _busy = true;
       _error = null;
-      _winState = _SecretState.saving;
-      _backupState = _SecretState.saving;
     });
-    // Windows password first; the backup password is written only if this succeeds.
-    final winOk = await _writeOne(writer, parts, 'WINPILOT_WIN_PASSWORD', winPw, (st) {
-      setState(() => _winState = st);
-    });
-    if (!mounted) return;
-    if (!winOk) return;
-    await _writeOne(writer, parts, 'BACKUP_PASSWORD', backupPw, (st) {
-      setState(() => _backupState = st);
-    });
-  }
-
-  Future<bool> _writeOne(
-    GitHubSecretsWriter writer,
-    List<String> parts,
-    String name,
-    String value,
-    void Function(_SecretState) onState,
-  ) async {
-    try {
-      final verified = await writer.write(
-        owner: parts[0],
-        repo: parts.sublist(1).join('/'),
-        name: name,
-        value: value,
-      );
-      if (!mounted) return false;
-      if (verified) {
-        onState(_SecretState.saved);
-        return true;
+    // Only secrets not yet confirmed are written, so a retry does not re-send the others.
+    for (final name in [_kWinPassword, _kBackupPassword, _kAccessPassword]) {
+      if (_state[name] == SecretSaveState.saved) continue;
+      setState(() => _state[name] = SecretSaveState.saving);
+      String? failure;
+      try {
+        final verified = await writer.write(
+          owner: owner,
+          repo: repo,
+          name: name,
+          value: _controller(name).text,
+        );
+        if (!verified) failure = s.t('secrets_not_verified', {'name': name});
+      } on AppFailure catch (e) {
+        failure = switch (e.kind) {
+          FailureKind.forbidden => s.t('secrets_forbidden', {'name': name}),
+          FailureKind.network || FailureKind.timeout => s.t('secrets_network', {'name': name}),
+          _ => s.t('secrets_generic', {'name': name}),
+        };
       }
-      onState(_SecretState.failed);
-      setState(() => _error = AppStrings.of(context).t('secrets_not_verified', {'name': name}));
-      return false;
-    } on AppFailure catch (e) {
-      if (!mounted) return false;
-      onState(_SecretState.failed);
-      final key = e.kind == FailureKind.forbidden
-          ? 'secrets_forbidden'
-          : e.kind == FailureKind.network || e.kind == FailureKind.timeout
-              ? 'secrets_network'
-              : 'secrets_generic';
-      setState(() => _error = AppStrings.of(context).t(key, {'name': name}));
-      return false;
+      if (!mounted) return;
+      if (failure == null) {
+        setState(() => _state[name] = SecretSaveState.saved);
+      } else {
+        // Stop at the first failure so the user sees exactly what is missing.
+        setState(() {
+          _state[name] = SecretSaveState.failed;
+          _error = failure;
+          _busy = false;
+        });
+        return;
+      }
     }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    showAppSnack(context, s.t('secrets_all_saved'));
   }
 
-  void _generate(TextEditingController target) {
+  void _generate(String name) {
     setState(() {
-      target.text = PasswordPolicy.generate(length: 24);
-      _showPassword = true;
-      _showBackup = true;
+      _controller(name).text = PasswordPolicy.generate(length: 24);
+      _shown[name] = true;
+      _state[name] = SecretSaveState.idle;
     });
   }
 
@@ -140,12 +156,12 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
     if (mounted) showAppSnack(context, s.t('secrets_copied'));
   }
 
-  Widget _statusChip(AppStrings s, _SecretState st) {
+  Widget _statusChip(AppStrings s, SecretSaveState st) {
     final (label, color, icon) = switch (st) {
-      _SecretState.idle => (s.t('secrets_status_idle'), AppColors.textMuted, Icons.hourglass_empty_rounded),
-      _SecretState.saving => (s.t('secrets_status_saving'), AppColors.cyan, Icons.sync_rounded),
-      _SecretState.saved => (s.t('secrets_status_saved'), AppColors.success, Icons.verified_rounded),
-      _SecretState.failed => (s.t('secrets_status_failed'), AppColors.danger, Icons.error_outline_rounded),
+      SecretSaveState.idle => (s.t('secrets_status_idle'), AppColors.textMuted, Icons.hourglass_empty_rounded),
+      SecretSaveState.saving => (s.t('secrets_status_saving'), AppColors.cyan, Icons.sync_rounded),
+      SecretSaveState.saved => (s.t('secrets_status_saved'), AppColors.success, Icons.verified_rounded),
+      SecretSaveState.failed => (s.t('secrets_status_failed'), AppColors.danger, Icons.error_outline_rounded),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -161,11 +177,71 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
     );
   }
 
+  Widget _passwordCard(
+    AppStrings s, {
+    required String name,
+    required String title,
+    required String description,
+    String? warning,
+  }) {
+    final controller = _controller(name);
+    final shown = _shown[name] ?? false;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GlassCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+              child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            _statusChip(s, _state[name] ?? SecretSaveState.idle),
+          ]),
+          const SizedBox(height: 4),
+          Text(description, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            enabled: !_busy,
+            obscureText: !shown,
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: TextInputType.visiblePassword,
+            onChanged: (_) => setState(() => _state[name] = SecretSaveState.idle),
+            decoration: InputDecoration(
+              labelText: name,
+              suffixIcon: IconButton(
+                tooltip: shown ? s.t('secrets_hide') : s.t('secrets_show'),
+                icon: Icon(shown ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+                onPressed: () => setState(() => _shown[name] = !shown),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, children: [
+            OutlinedButton.icon(
+              onPressed: _busy ? null : () => _generate(name),
+              icon: const Icon(Icons.auto_fix_high_rounded),
+              label: Text(s.t('secrets_generate')),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => _copy(controller.text, s),
+              icon: const Icon(Icons.copy_rounded),
+              label: Text(s.t('secrets_copy')),
+            ),
+          ]),
+          if (warning != null) ...[
+            const SizedBox(height: 8),
+            Text(warning, style: const TextStyle(color: AppColors.warning, fontSize: 12)),
+          ],
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = context.s;
     final repo = ref.watch(settingsProvider.select((x) => x.defaultRepo));
-    final busy = _winState == _SecretState.saving || _backupState == _SecretState.saving;
     return Scaffold(
       appBar: AppBar(
         title: Text(s.t('secrets_title')),
@@ -193,97 +269,44 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
             const SizedBox(height: 12),
             SectionTitle(s.t('secrets_windows_section')),
             GlassCard(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                TextField(
-                  controller: _user,
-                  enabled: !busy,
-                  autocorrect: false,
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(labelText: s.t('secrets_username')),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  enabled: !busy,
-                  obscureText: !_showPassword,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  keyboardType: TextInputType.visiblePassword,
-                  decoration: InputDecoration(
-                    labelText: s.t('secrets_password'),
-                    suffixIcon: IconButton(
-                      tooltip: _showPassword ? s.t('secrets_hide') : s.t('secrets_show'),
-                      icon: Icon(_showPassword ? Icons.visibility_off_rounded : Icons.visibility_rounded),
-                      onPressed: () => setState(() => _showPassword = !_showPassword),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, children: [
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : () => _generate(_password),
-                    icon: const Icon(Icons.auto_fix_high_rounded),
-                    label: Text(s.t('secrets_generate')),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _copy(_password.text, s),
-                    icon: const Icon(Icons.copy_rounded),
-                    label: Text(s.t('secrets_copy')),
-                  ),
-                ]),
-                const SizedBox(height: 8),
-                _statusChip(s, _winState),
-              ]),
+              child: TextField(
+                controller: _user,
+                enabled: !_busy,
+                autocorrect: false,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(labelText: s.t('secrets_username')),
+              ),
             ),
             const SizedBox(height: 12),
+            _passwordCard(
+              s,
+              name: _kWinPassword,
+              title: s.t('secrets_win_title'),
+              description: s.t('secrets_win_desc'),
+            ),
             SectionTitle(s.t('secrets_backup_section')),
-            GlassCard(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(s.t('secrets_backup_desc'), style: const TextStyle(color: AppColors.textMuted)),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _backup,
-                  enabled: !busy,
-                  obscureText: !_showBackup,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  keyboardType: TextInputType.visiblePassword,
-                  decoration: InputDecoration(
-                    labelText: s.t('secrets_backup_password'),
-                    suffixIcon: IconButton(
-                      tooltip: _showBackup ? s.t('secrets_hide') : s.t('secrets_show'),
-                      icon: Icon(_showBackup ? Icons.visibility_off_rounded : Icons.visibility_rounded),
-                      onPressed: () => setState(() => _showBackup = !_showBackup),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, children: [
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : () => _generate(_backup),
-                    icon: const Icon(Icons.auto_fix_high_rounded),
-                    label: Text(s.t('secrets_generate')),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _copy(_backup.text, s),
-                    icon: const Icon(Icons.copy_rounded),
-                    label: Text(s.t('secrets_copy')),
-                  ),
-                ]),
-                const SizedBox(height: 8),
-                _statusChip(s, _backupState),
-                const SizedBox(height: 8),
-                Text(s.t('secrets_backup_warning'), style: const TextStyle(color: AppColors.warning, fontSize: 12)),
-              ]),
+            _passwordCard(
+              s,
+              name: _kBackupPassword,
+              title: s.t('secrets_backup_title'),
+              description: s.t('secrets_backup_desc'),
+              warning: s.t('secrets_backup_warning'),
+            ),
+            SectionTitle(s.t('secrets_access_section')),
+            _passwordCard(
+              s,
+              name: _kAccessPassword,
+              title: s.t('secrets_access_title'),
+              description: s.t('secrets_access_desc'),
             ),
             if (_error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
               Text(_error!, style: const TextStyle(color: AppColors.danger)),
             ],
             const SizedBox(height: 16),
             GradientButton(
-              label: busy ? s.t('secrets_saving') : s.t('secrets_save'),
-              onPressed: busy ? null : () => _save(s),
+              label: _busy ? s.t('secrets_saving') : s.t('secrets_save'),
+              onPressed: _busy ? null : () => _save(s),
             ),
             const SizedBox(height: 12),
             Text(s.t('secrets_roles'), style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),

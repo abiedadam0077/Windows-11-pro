@@ -3,21 +3,28 @@
 # How it works
 # - Runs Windows 11 Pro (x64) inside Docker with KVM, using the open-source dockur/windows
 #   image: https://github.com/dockur/windows
-# - Runner: ubuntu-latest. KVM (/dev/kvm) was verified available there by the WinPilot
-#   probe workflow. The job fails if /dev/kvm is missing; there is no silent fallback.
-# - Windows user and password come from the repository secret WINPILOT_WIN_PASSWORD and
-#   are passed to the VM at first install only. They are masked in logs.
+# - Runner: ubuntu-latest. KVM is checked at the start of every run. The job fails if /dev/kvm
+#   is missing; there is no silent fallback. KVM on hosted runners is NOT guaranteed.
+# - Windows user and password come from the repository secret WINPILOT_WIN_PASSWORD and are
+#   passed to the VM at first install only. They are masked in logs.
 # - The VM disk is saved at the end of every session as an encrypted backup (BACKUP_PASSWORD)
 #   in a pre-release named win-backup-*. The newest valid backups are restored next time.
-#   The last two valid backups are kept; older ones are deleted only after a new backup is verified.
+#   The last two valid backups are kept; older ones are deleted only after a new backup is
+#   uploaded and re-downloaded with matching checksums.
+# - Browser access: dockur's web viewer (port 8006) is bound to 127.0.0.1 only and is reached
+#   through an nginx front that requires ACCESS_PASSWORD (HTTP Basic auth). A temporary
+#   Cloudflare quick tunnel exposes that front. The tunnel URL is never printed to the log; it
+#   is stored encrypted with ACCESS_PASSWORD in the artifact winpilot-access.
 # - Runner files are removed when the job ends. The backup release is the only persistent state.
 #
 # Honest limits
 # - A finished workflow run does NOT mean Windows or RDP is ready. The readiness step checks the
 #   RDP port inside the VM; the app checks the Tailscale address from the phone.
 # - Losing BACKUP_PASSWORD makes existing backups unreadable.
+# - Runner disk is limited (about 14 GB free after cleanup on hosted runners); the storage
+#   checks below stop the run before a backup or restore can fill it.
 #
-# Markers "WINPILOT|KEY=VALUE" are parsed by the app. Secrets are never printed.
+# Markers "WINPILOT|KEY=VALUE" are parsed by the app. Secrets and URLs are never printed.
 
 name: WinPilot - Windows 11 Pro VM
 
@@ -37,7 +44,7 @@ on:
       use_tailscale:
         description: 'Join Tailscale (requires the TS_AUTHKEY secret)'
         required: false
-        default: true
+        default: false
         type: boolean
       session_minutes:
         description: 'Session length after Windows is ready, in minutes (5-120)'
@@ -47,6 +54,7 @@ on:
 
 permissions:
   contents: write  # create and prune backup pre-releases
+  actions: read    # read the workflow's own run metadata
 
 concurrency:
   group: winpilot-vm-${{ github.repository }}
@@ -60,7 +68,7 @@ jobs:
     env:
       WIN_USER: ${{ inputs.windows_username || 'winpilot' }}
       ENABLE_RDP: ${{ format('{0}', inputs.enable_rdp) == 'false' && 'false' || 'true' }}
-      USE_TAILSCALE: ${{ format('{0}', inputs.use_tailscale) == 'false' && 'false' || 'true' }}
+      USE_TAILSCALE: ${{ format('{0}', inputs.use_tailscale) == 'true' && 'true' || 'false' }}
       SESSION_MINUTES: ${{ inputs.session_minutes || '60' }}
       GH_TOKEN: ${{ github.token }}
       VM_NAME: winpilot-vm
@@ -71,6 +79,7 @@ jobs:
         env:
           WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
           BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           set -euo pipefail
@@ -89,9 +98,10 @@ jobs:
             echo "::error::Secret WINPILOT_WIN_PASSWORD is missing. Set it in repository settings or from WinPilot."; exit 1
           fi
           echo "::add-mask::$WIN_PASSWORD"
-          if [ "${#WIN_PASSWORD}" -lt 12 ] || ! [[ "$WIN_PASSWORD" =~ [A-Z] && "$WIN_PASSWORD" =~ [a-z] && "$WIN_PASSWORD" =~ [0-9] && "$WIN_PASSWORD" =~ [^A-Za-z0-9] ]]; then
+          if [ "${#WIN_PASSWORD}" -lt 12 ] || [ "${#WIN_PASSWORD}" -gt 127 ] || [[ "$WIN_PASSWORD" =~ [[:cntrl:]] ]] \
+             || ! [[ "$WIN_PASSWORD" =~ [A-Z] && "$WIN_PASSWORD" =~ [a-z] && "$WIN_PASSWORD" =~ [0-9] && "$WIN_PASSWORD" =~ [^A-Za-z0-9] ]]; then
             echo "WINPILOT|ERROR=weak_password_secret"
-            echo "::error::WINPILOT_WIN_PASSWORD must be 12+ characters with upper, lower, digit and symbol."; exit 1
+            echo "::error::WINPILOT_WIN_PASSWORD must be 12-127 characters with upper, lower, digit and symbol, without control characters."; exit 1
           fi
           if [ -z "$BACKUP_PASSWORD" ]; then
             echo "WINPILOT|ERROR=missing_backup_secret"
@@ -100,6 +110,14 @@ jobs:
           echo "::add-mask::$BACKUP_PASSWORD"
           if [ "${#BACKUP_PASSWORD}" -lt 16 ]; then
             echo "WINPILOT|ERROR=weak_backup_secret"; echo "::error::BACKUP_PASSWORD must be at least 16 characters."; exit 1
+          fi
+          if [ -z "$ACCESS_PASSWORD" ]; then
+            echo "WINPILOT|ERROR=missing_access_secret"
+            echo "::error::Secret ACCESS_PASSWORD is missing. The browser access page cannot be protected without it."; exit 1
+          fi
+          echo "::add-mask::$ACCESS_PASSWORD"
+          if [ "${#ACCESS_PASSWORD}" -lt 12 ]; then
+            echo "WINPILOT|ERROR=weak_access_secret"; echo "::error::ACCESS_PASSWORD must be at least 12 characters."; exit 1
           fi
           if [ "$USE_TAILSCALE" = "true" ] && [ -n "$TS_AUTHKEY" ]; then
             echo "::add-mask::$TS_AUTHKEY"
@@ -140,6 +158,7 @@ jobs:
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
             -q '[.[] | select(.tagName | startswith("win-backup-"))] | sort_by(.createdAt) | reverse | .[].tagName' \
             > "$SCRATCH/backup-tags.txt" || true
+          avail_bytes() { df -B1 --output=avail "$1" | tail -1 | tr -dc '0-9'; }
           restored=""
           tried=0
           while read -r tag; do
@@ -150,7 +169,18 @@ jobs:
             if ! gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p manifest.json -D "$dir" 2>/dev/null; then
               echo "WINPILOT|RESTORE_STATE=manifest_download_failed"; continue
             fi
+            if ! python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["format"]=="winpilot-vm-backup-v1"' "$dir/manifest.json" 2>/dev/null; then
+              echo "WINPILOT|RESTORE_STATE=manifest_invalid"; continue
+            fi
             parts=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(p["name"] for p in m["parts"]))' "$dir/manifest.json")
+            total=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(sum(p["bytes"] for p in m["parts"]))' "$dir/manifest.json")
+            # Parts are streamed, not joined. Keep room for the parts plus the extracted disk.
+            need=$(( total * 3 + 2147483648 ))
+            if [ "$(avail_bytes "$dir")" -lt "$need" ]; then
+              echo "WINPILOT|RESTORE_STATE=low_storage"
+              echo "::error::Not enough free disk on the runner to restore the backup safely. Existing backups were not changed."
+              exit 1
+            fi
             ok=true
             for p in $parts; do
               gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p "$p" -D "$dir" || { ok=false; break; }
@@ -166,13 +196,20 @@ jobs:
                   sys.exit(f"checksum mismatch for {p['name']}")
           PY
             then echo "WINPILOT|RESTORE_STATE=checksum_failed"; continue; fi
-            cat $(for p in $parts; do echo "$dir/$p"; done) > "$dir/archive.enc"
             want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive_sha256"])' "$dir/manifest.json")
-            got=$(sha256sum "$dir/archive.enc" | cut -d' ' -f1)
+            got=$(cat $(for p in $parts; do echo "$dir/$p"; done) | sha256sum | cut -d' ' -f1)
             if [ "$got" != "$want" ]; then echo "WINPILOT|RESTORE_STATE=archive_checksum_failed"; continue; fi
-            if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -pass env:BACKUP_PASSWORD -in "$dir/archive.enc" \
-                 | zstd -d -q -c | tar -xSf - -C "$STORE"; then
+            rm -rf "$STORE"; mkdir -p "$STORE"
+            set +e
+            cat $(for p in $parts; do echo "$dir/$p"; done) \
+              | openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -pass env:BACKUP_PASSWORD \
+              | zstd -d -q -c \
+              | tar -xSf - -C "$STORE"
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
               # Checksums matched, so this is the password or a format problem, not corruption.
+              # The backup is not deleted. Do not try older backups with the same password.
               echo "WINPILOT|RESTORE_STATE=decrypt_failed"
               echo "::error::Could not decrypt the backup. Check that BACKUP_PASSWORD is the same password used when the backup was created."
               exit 1
@@ -193,6 +230,8 @@ jobs:
           du -sh "$STORE" || true
 
       - name: 'WinPilot: start Windows 11 Pro VM'
+        env:
+          WINPILOT_WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
         run: |
           set -euo pipefail
           echo "WINPILOT|STAGE=vm_start"
@@ -206,10 +245,13 @@ jobs:
             echo "CPU_CORES=4"
             echo "DISK_SIZE=64G"
           } > "$ENV_FILE"
-          PORTS=(-p 3389:3389/tcp -p 3389:3389/udp)
+          # The web viewer stays on loopback; only the nginx front (password protected) reaches it.
+          # RDP is published on the host so the readiness check and Tailscale can reach it.
           docker run -d --name "$VM_NAME" --env-file "$ENV_FILE" \
             --device /dev/kvm --device /dev/net/tun --cap-add NET_ADMIN \
-            --stop-timeout 120 -v "$STORE:/storage" "${PORTS[@]}" dockurr/windows >/dev/null
+            --stop-timeout 120 -v "$STORE:/storage" \
+            -p 127.0.0.1:8006:8006 -p 3389:3389/tcp -p 3389:3389/udp \
+            dockurr/windows >/dev/null
           rm -f "$ENV_FILE"
           sleep 5
           if ! docker ps -q --filter "name=$VM_NAME" | grep -q .; then
@@ -218,8 +260,91 @@ jobs:
             exit 1
           fi
           echo "WINPILOT|VM_CONTAINER=started"
+
+      - name: 'WinPilot: start protected browser access'
         env:
-          WINPILOT_WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
+        run: |
+          set -uo pipefail
+          echo "WINPILOT|STAGE=browser_access"
+          umask 077
+          mkdir -p "$SCRATCH/nginx-tmp" "$SCRATCH/access-out"
+          if ! command -v nginx >/dev/null; then
+            sudo apt-get install -y -qq nginx >/dev/null || { echo "WINPILOT|ACCESS_STATE=nginx_install_failed"; exit 0; }
+          fi
+          printf 'winpilot:%s\n' "$(printf '%s' "$ACCESS_PASSWORD" | openssl passwd -apr1 -stdin)" > "$SCRATCH/htpasswd"
+          cat > "$SCRATCH/nginx.conf" <<'NGINX'
+          user RUNNER_USER;
+          worker_processes 1;
+          pid SCRATCH_DIR/nginx.pid;
+          error_log SCRATCH_DIR/nginx-error.log warn;
+          events { worker_connections 256; }
+          http {
+            access_log off;
+            client_body_temp_path SCRATCH_DIR/nginx-tmp/body;
+            proxy_temp_path SCRATCH_DIR/nginx-tmp/proxy;
+            map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+            server {
+              listen 127.0.0.1:8080;
+              auth_basic "WinPilot session";
+              auth_basic_user_file SCRATCH_DIR/htpasswd;
+              location / {
+                proxy_pass http://127.0.0.1:8006;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                proxy_set_header Host $host;
+                proxy_buffering off;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+              }
+            }
+          }
+          NGINX
+          sed -i "s#SCRATCH_DIR#$SCRATCH#g; s#RUNNER_USER#$(id -un)#g" "$SCRATCH/nginx.conf"
+          if ! sudo nginx -t -c "$SCRATCH/nginx.conf" >/dev/null 2>&1; then
+            echo "WINPILOT|ACCESS_STATE=nginx_config_failed"; exit 0
+          fi
+          sudo nginx -c "$SCRATCH/nginx.conf"
+          # Local check with the password header kept in a file (not on the command line).
+          printf 'Authorization: Basic %s\n' "$(printf 'winpilot:%s' "$ACCESS_PASSWORD" | base64 -w0)" > "$SCRATCH/auth.hdr"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$SCRATCH/auth.hdr" http://127.0.0.1:8080/ || true)
+          anon=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || true)
+          if [ "$anon" != "401" ]; then echo "WINPILOT|ACCESS_STATE=anonymous_not_blocked"; exit 0; fi
+          echo "WINPILOT|ACCESS_LOCAL_HTTP=$code"
+          # Temporary public tunnel. Its URL goes only into an encrypted file, never into the log.
+          arch=amd64
+          curl -fsSL -o "$SCRATCH/cloudflared" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" \
+            && chmod +x "$SCRATCH/cloudflared" || { echo "WINPILOT|ACCESS_STATE=cloudflared_download_failed"; exit 0; }
+          rm -f "$SCRATCH/cloudflared.log"
+          setsid nohup "$SCRATCH/cloudflared" tunnel --no-autoupdate --url http://127.0.0.1:8080 --logfile "$SCRATCH/cloudflared.log" >/dev/null 2>&1 < /dev/null &
+          echo $! > "$SCRATCH/cloudflared.pid"
+          url=""
+          for _ in $(seq 1 30); do
+            url=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$SCRATCH/cloudflared.log" 2>/dev/null | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 4
+          done
+          if [ -z "$url" ]; then echo "WINPILOT|ACCESS_STATE=tunnel_no_url"; exit 0; fi
+          ok=false
+          for _ in $(seq 1 10); do
+            c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H @"$SCRATCH/auth.hdr" "$url/" || true)
+            if [ "$c" = "200" ]; then ok=true; break; fi
+            sleep 6
+          done
+          if [ "$ok" != true ]; then echo "WINPILOT|ACCESS_STATE=tunnel_check_failed"; exit 0; fi
+          printf '%s' "$url" | openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass env:ACCESS_PASSWORD -out "$SCRATCH/access-out/access.enc"
+          echo "WINPILOT|ACCESS_STATE=ready_encrypted"
+          echo "WINPILOT|ACCESS_NOTE=Open the access link in WinPilot with ACCESS_PASSWORD. The link is not printed here."
+
+      - name: 'WinPilot: publish encrypted access link'
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: winpilot-access
+          path: /home/runner/winpilot-scratch/access-out/access.enc
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: 'WinPilot: wait for Windows readiness'
         env:
@@ -246,7 +371,8 @@ jobs:
           fi
           date +%s > "$SCRATCH/ready_at"
           touch "$SCRATCH/ready.flag"
-          # The VM image is Windows 11 Pro x64 (dockur VERSION=11). This marks the configured image, not a value read from inside Windows.
+          # The image is Windows 11 Pro x64 (dockur VERSION=11). This marks the configured image,
+          # not a value read from inside Windows.
           echo "WINPILOT|ARCH=x64"
           echo "WINPILOT|RDP_PORT_OPEN=true"
           echo "WINPILOT|WINDOWS_READY=true"
@@ -254,7 +380,7 @@ jobs:
           echo "WINPILOT|READY_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: 'WinPilot: join Tailscale'
-        if: ${{ format('{0}', inputs.use_tailscale) != 'false' }}
+        if: ${{ env.USE_TAILSCALE == 'true' }}
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
@@ -308,16 +434,23 @@ jobs:
             echo "WINPILOT|BACKUP=failed_missing_secret"; exit 1
           fi
           echo "WINPILOT|STAGE=backup"
+          # Need room for the encrypted parts (up to the used size) plus margin. Checked before writing.
+          used=$(du -sB1 "$STORE" | cut -f1)
+          free=$(df -B1 --output=avail "$SCRATCH" | tail -1 | tr -dc '0-9')
+          if [ "$free" -lt $(( used + 2147483648 )) ]; then
+            echo "WINPILOT|BACKUP=failed_low_storage"
+            echo "::error::Not enough free disk to write the backup. The previous backups were not changed."
+            exit 1
+          fi
           tag="win-backup-$(date -u +%Y%m%d-%H%M%S)-run$GITHUB_RUN_NUMBER"
           out="$SCRATCH/backup"; rm -rf "$out"; mkdir -p "$out"
-          archive="$SCRATCH/backup.tar.zst.enc"
           set -e
+          # Streamed: tar -> zstd -> AES -> split. No full plaintext or ciphertext copy on disk.
           tar -cSf - -C "$STORE" --exclude='*.iso' --exclude='./tmp' --exclude='setup.img' . \
             | zstd -T0 -6 -q \
-            | openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass env:BACKUP_PASSWORD -out "$archive"
-          archive_sha=$(sha256sum "$archive" | cut -d' ' -f1)
-          split -b 1900M -d -a 3 "$archive" "$out/part-"
-          rm -f "$archive"
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass env:BACKUP_PASSWORD \
+            | split -b 1900M -d -a 3 - "$out/part-"
+          archive_sha=$(cat "$out"/part-* | sha256sum | cut -d' ' -f1)
           python3 - "$out" "$archive_sha" "$tag" <<'PY'
           import hashlib, json, os, sys, datetime
           out, archive_sha, tag = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -327,7 +460,7 @@ jobs:
               h = hashlib.sha256(open(path, "rb").read()).hexdigest()
               parts.append({"name": name, "sha256": h, "bytes": os.path.getsize(path)})
           m = {"format": "winpilot-vm-backup-v1", "tag": tag,
-               "created": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "cipher": "aes-256-cbc-pbkdf2-300000", "compression": "zstd",
                "archive_sha256": archive_sha, "parts": parts}
           json.dump(m, open(os.path.join(out, "manifest.json"), "w"), indent=2)
@@ -341,20 +474,32 @@ jobs:
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes >/dev/null 2>&1 || true
             exit 1
           fi
-          # Verify the uploaded copy by downloading it again and comparing checksums.
+          # Free local copies, then verify what GitHub stored by downloading it again.
+          rm -rf "$out"
           verify="$SCRATCH/verify"; rm -rf "$verify"; mkdir -p "$verify"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p manifest.json -D "$verify" && \
-          python3 - "$verify" <<'PY'
-          import hashlib, json, os, sys, subprocess
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p manifest.json -D "$verify"
+          verify_ok=true
+          for p in $(python3 -c 'import json,sys; print("\n".join(x["name"] for x in json.load(open(sys.argv[1]))["parts"]))' "$verify/manifest.json"); do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p "$p" -D "$verify" || { verify_ok=false; break; }
+          done
+          if [ "$verify_ok" = true ]; then
+            python3 - "$verify" <<'PY' || verify_ok=false
+          import hashlib, json, os, sys
           d = sys.argv[1]
           m = json.load(open(os.path.join(d, "manifest.json")))
           for p in m["parts"]:
-              subprocess.run(["gh", "release", "download", m["tag"], "--repo", os.environ["GITHUB_REPOSITORY"], "-p", p["name"], "-D", d], check=True)
               h = hashlib.sha256(open(os.path.join(d, p["name"]), "rb").read()).hexdigest()
               if h != p["sha256"]:
-                  sys.exit(f"uploaded {p['name']} does not match")
+                  sys.exit(1)
           PY
-          if [ $? -ne 0 ]; then
+          fi
+          if [ "$verify_ok" = true ]; then
+            got=$(cat "$verify"/part-* | sha256sum | cut -d' ' -f1)
+            want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive_sha256"])' "$verify/manifest.json")
+            [ "$got" = "$want" ] || verify_ok=false
+          fi
+          rm -rf "$verify"
+          if [ "$verify_ok" != true ]; then
             echo "WINPILOT|BACKUP=verify_failed"
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes >/dev/null 2>&1 || true
             exit 1
@@ -369,11 +514,13 @@ jobs:
                 gh release delete "$old" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes >/dev/null 2>&1 \
                   && echo "WINPILOT|PRUNED=$old" || echo "WINPILOT|PRUNE_FAILED=$old"
               done
-          rm -rf "$out" "$verify"
 
       - name: 'WinPilot: cleanup'
         if: ${{ always() }}
         run: |
-          sudo tailscale logout >/dev/null 2>&1 || true
+          if [ -f "$SCRATCH/cloudflared.pid" ]; then kill "$(cat "$SCRATCH/cloudflared.pid")" >/dev/null 2>&1 || true; fi
+          sudo nginx -c "$SCRATCH/nginx.conf" -s quit >/dev/null 2>&1 || true
+          if [ "$USE_TAILSCALE" = "true" ]; then sudo tailscale logout >/dev/null 2>&1 || true; fi
           docker rm -f "$VM_NAME" >/dev/null 2>&1 || true
+          rm -f "$SCRATCH/htpasswd" "$SCRATCH/auth.hdr" "$SCRATCH/cloudflared.log" || true
           echo "WINPILOT|STAGE=done"
