@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:app_links/app_links.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -22,6 +21,7 @@ class AuthState {
     this.scopes = const [],
     this.failure,
     this.offline = false,
+    this.deviceCode,
   });
 
   final AuthStatus status;
@@ -32,6 +32,9 @@ class AuthState {
   /// True when the profile could not be refreshed due to connectivity.
   final bool offline;
 
+  /// Device-flow code shown to the user while [AuthStatus.signingIn].
+  final DeviceCode? deviceCode;
+
   bool get isSignedIn => status == AuthStatus.signedIn || status == AuthStatus.expired;
 
   /// Classic OAuth scopes: `workflow` is needed to write workflow files.
@@ -41,8 +44,9 @@ class AuthState {
 }
 
 class AuthController extends Notifier<AuthState> {
-  final AppLinks _appLinks = AppLinks();
-  Completer<Uri>? _pendingCallback;
+  /// Incremented by every sign-in attempt and by cancellation. A polling loop
+  /// whose id no longer matches is stale and must not touch the state.
+  int _attemptSeq = 0;
 
   @override
   AuthState build() => const AuthState();
@@ -95,8 +99,9 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  /// OAuth Authorization Code flow with PKCE, opened in the system browser.
-  /// The redirect comes back through the `winpilot://oauth/callback` deep link.
+  /// GitHub Device Flow. The user opens github.com/login/device and enters
+  /// [AuthState.deviceCode.userCode]; WinPilot polls until approval, denial,
+  /// expiry, or cancellation. No client secret and no password is involved.
   Future<void> signIn() async {
     final clientId = ref.read(settingsProvider).effectiveClientId;
     if (clientId.isEmpty) {
@@ -106,83 +111,49 @@ class AuthController extends Notifier<AuthState> {
       );
       return;
     }
-
-    final attempt = OAuthAttempt.create();
-    final callback = Completer<Uri>();
-    _pendingCallback = callback;
-    final sub = _appLinks.uriLinkStream.listen(
-      (uri) {
-        if (uri.scheme == AppConfig.oauthCallbackScheme &&
-            uri.host == 'oauth' &&
-            !callback.isCompleted) {
-          callback.complete(uri);
-        }
-      },
-      onError: (Object _) {
-        if (!callback.isCompleted) {
-          callback.completeError(const AppFailure(FailureKind.unknown));
-        }
-      },
-    );
-
+    final attempt = ++_attemptSeq;
+    bool isCurrent() => attempt == _attemptSeq;
+    final oauth = ref.read(oauthServiceProvider);
     state = const AuthState(status: AuthStatus.signingIn);
     try {
-      final opened = await launchUrl(
-        attempt.authorizeUri(clientId),
-        mode: LaunchMode.externalApplication,
+      final code = await oauth.requestDeviceCode(clientId);
+      if (!isCurrent()) return;
+      state = AuthState(status: AuthStatus.signingIn, deviceCode: code);
+      final token = await oauth.pollForToken(
+        clientId: clientId,
+        code: code,
+        isCancelled: () => !isCurrent(),
       );
-      if (!opened) throw const AppFailure(FailureKind.unsupported, detail: 'no browser');
-
-      final uri = await callback.future.timeout(const Duration(minutes: 5));
-      final error = uri.queryParameters['error'];
-      if (error != null) {
-        throw AppFailure(
-          error == 'access_denied' ? FailureKind.cancelled : FailureKind.unauthorized,
-          detail: uri.queryParameters['error_description'] ?? error,
-        );
-      }
-      if (uri.queryParameters['state'] != attempt.state) {
-        throw const AppFailure(FailureKind.unauthorized, detail: 'state mismatch');
-      }
-      final code = uri.queryParameters['code'];
-      if (code == null || code.isEmpty) {
-        throw const AppFailure(FailureKind.unauthorized, detail: 'missing authorization code');
-      }
-
-      final token = await ref.read(oauthServiceProvider).exchangeCode(
-            clientId: clientId,
-            code: code,
-            verifier: attempt.verifier,
-          );
+      if (!isCurrent()) throw const AppFailure(FailureKind.cancelled);
       await ref.read(accessTokenStoreProvider).write(token);
       ref.read(tokenHolderProvider).token = token;
       state = const AuthState(status: AuthStatus.signedIn);
       await refreshProfile();
-    } on TimeoutException {
-      state = const AuthState(
-        status: AuthStatus.failed,
-        failure: AppFailure(FailureKind.timeout),
-      );
     } on AppFailure catch (e) {
+      if (!isCurrent()) return;
       state = AuthState(
         status: e.kind == FailureKind.cancelled ? AuthStatus.signedOut : AuthStatus.failed,
         failure: e.kind == FailureKind.cancelled ? null : e,
       );
     } catch (_) {
+      if (!isCurrent()) return;
       state = const AuthState(
         status: AuthStatus.failed,
         failure: AppFailure(FailureKind.unknown),
       );
-    } finally {
-      await sub.cancel();
-      _pendingCallback = null;
     }
   }
 
+  /// Opens the GitHub device page in the browser (user taps the button).
+  Future<bool> openVerificationPage() async {
+    final uri = Uri.parse(state.deviceCode?.verificationUri ?? 'https://github.com/login/device');
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   void cancelSignIn() {
-    final pending = _pendingCallback;
-    if (pending != null && !pending.isCompleted) {
-      pending.completeError(const AppFailure(FailureKind.cancelled));
+    _attemptSeq++;
+    if (state.status == AuthStatus.signingIn) {
+      state = const AuthState(status: AuthStatus.signedOut);
     }
   }
 

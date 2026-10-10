@@ -7,6 +7,7 @@ import '../features/auth/account_page.dart';
 import '../features/auth/welcome_page.dart';
 import '../features/dashboard/dashboard_page.dart';
 import '../features/home/home_shell.dart';
+import '../features/about/about_page.dart';
 import '../features/legal/legal_page.dart';
 import '../features/onboarding/onboarding_page.dart';
 import '../features/rdp/rdp_guide_page.dart';
@@ -38,7 +39,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
       final status = ref.read(authProvider).status;
       final signedIn = status == AuthStatus.signedIn || status == AuthStatus.expired;
-      final isPublic = loc == '/welcome' || loc == '/onboarding' || loc.startsWith('/legal');
+      final isPublic = loc == '/welcome' || loc == '/onboarding' ||
+          loc == '/about' || loc.startsWith('/legal');
       if (!signedIn && !isPublic) return '/welcome';
       if (signedIn && loc == '/welcome') return '/home/dashboard';
       if (status == AuthStatus.unknown && loc != '/splash') return '/splash';
@@ -62,6 +64,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
       GoRoute(path: '/account', builder: (context, state) => const AccountPage()),
+      GoRoute(path: '/about', builder: (context, state) => const AboutPage()),
       GoRoute(path: '/repos', builder: (context, state) => const RepoPickerPage()),
       GoRoute(path: '/setup', builder: (context, state) => const SetupWizardPage()),
       GoRoute(path: '/rdp', builder: (context, state) => const RdpGuidePage()),

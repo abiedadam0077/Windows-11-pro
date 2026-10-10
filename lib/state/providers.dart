@@ -10,6 +10,7 @@ import '../data/services/local_session_store.dart';
 import '../data/services/notification_service.dart';
 import '../data/services/oauth_service.dart';
 import '../data/services/rdp_service.dart';
+import '../data/services/update_service.dart';
 import '../models/github_models.dart';
 import '../models/session_models.dart';
 import 'auth_state.dart';
@@ -33,6 +34,8 @@ final notificationServiceProvider = Provider<NotificationService>((ref) => Notif
 final rdpServiceProvider = Provider<RdpService>((ref) => RdpService());
 
 final oauthServiceProvider = Provider<OAuthService>((ref) => OAuthService());
+
+final updateServiceProvider = Provider<UpdateService>((ref) => UpdateService());
 
 final githubApiProvider = Provider<GitHubApi>((ref) {
   final holder = ref.watch(tokenHolderProvider);

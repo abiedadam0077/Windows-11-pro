@@ -7,9 +7,8 @@
 abstract final class AppConfig {
   static const appName = 'WinPilot';
 
-  // OAuth (Authorization Code + PKCE, no client secret in the app).
-  static const oauthCallbackScheme = 'winpilot';
-  static const oauthRedirectUri = 'winpilot://oauth/callback';
+  // OAuth: GitHub Device Flow. Needs only the public Client ID; no client
+  // secret, no redirect URI, no custom URL scheme.
   static const oauthScopes = 'repo workflow read:user';
   static const defaultClientId = String.fromEnvironment('GITHUB_CLIENT_ID');
 
@@ -48,4 +47,9 @@ abstract final class AppConfig {
   static const tailscaleAdminKeysUrl =
       'https://login.tailscale.com/admin/settings/keys';
   static const notificationChannelId = 'winpilot_sessions';
+
+  // Updates: published as GitHub Releases on this repository.
+  static const releasesRepo = 'abiedadam0077/Windows-11-pro';
+  static const updateManifestAsset = 'winpilot-update.json';
+  static const releaseApkAsset = 'WinPilot-release.apk';
 }

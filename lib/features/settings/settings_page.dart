@@ -55,6 +55,26 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (!granted && mounted) showAppSnack(context, s.t('settings_notif_denied'));
   }
 
+  void _saveClientId(BuildContext context) {
+    final s = context.s;
+    final raw = _clientId.text.trim();
+    if (raw.isEmpty) {
+      ref.read(settingsProvider.notifier).setClientId(null);
+      showAppSnack(context, s.t('settings_client_id_cleared'));
+      return;
+    }
+    if (Validators.isLikelyClientSecret(raw)) {
+      showAppSnack(context, s.t('client_id_is_secret'));
+      return;
+    }
+    if (!Validators.isValidClientId(raw)) {
+      showAppSnack(context, s.t('client_id_invalid'));
+      return;
+    }
+    ref.read(settingsProvider.notifier).setClientId(raw);
+    showAppSnack(context, s.t('settings_client_id_saved'));
+  }
+
   Future<void> _signOut() async {
     final s = context.s;
     final ok = await confirmDialog(
@@ -218,13 +238,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     labelText: s.t('settings_client_id'),
                     helperText: s.t('settings_client_id_hint'),
                   ),
-                  onSubmitted: (v) => ctrl.setClientId(v),
+                  onSubmitted: (_) => _saveClientId(context),
                 ),
                 const SizedBox(height: 6),
                 Align(
                   alignment: AlignmentDirectional.centerEnd,
                   child: TextButton(
-                    onPressed: () => ctrl.setClientId(_clientId.text),
+                    onPressed: () => _saveClientId(context),
                     child: Text(s.t('save')),
                   ),
                 ),
@@ -259,6 +279,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   onTap: () => context.push('/legal/limits'),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          GlassCard(
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.system_update_alt_rounded),
+              title: Text(s.t('about_title')),
+              subtitle: Text(s.t('about_settings_desc')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => context.push('/about'),
             ),
           ),
           const SizedBox(height: 12),

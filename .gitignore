@@ -24,3 +24,7 @@ key.properties
 dist/
 .env
 .env.*
+
+# Release signing material (never commit)
+*.p12
+*.b64

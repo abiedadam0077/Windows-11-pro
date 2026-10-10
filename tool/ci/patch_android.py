@@ -3,9 +3,13 @@
 
 Usage: patch_android.py <path-to-android-dir>
 
-- Copies android_overrides/AndroidManifest.xml (INTERNET, notifications, OAuth intent filter).
-- Sets compileSdk to 36 (plugin AARs require it) and minSdk to 23 (required by flutter_secure_storage / app_links on current plugin versions).
+- Copies android_overrides/AndroidManifest.xml (INTERNET and notifications).
+- Sets compileSdk to 36 (plugin AARs require it) and minSdk to 23 (required by flutter_secure_storage on current plugin versions).
 - Enables core library desugaring (flutter_local_notifications 17 requires it on Android).
+- Adds a `release` signing config that reads the stable keystore from environment variables
+  (WINPILOT_KEYSTORE_PATH / WINPILOT_KEYSTORE_PASSWORD / WINPILOT_KEY_ALIAS / WINPILOT_KEY_PASSWORD).
+  Without those variables the release build is NOT signed with a debug key: the CI workflow
+  refuses to run before the build when the secrets are missing, and verifies the signature afterwards.
 
 Fails loudly if a Gradle file does not have the expected shape, so CI never
 ships an APK that was patched only partially.
@@ -105,12 +109,67 @@ def patch_root_gradle(android_dir: pathlib.Path) -> None:
     print(f'root gradle patched: {path}')
 
 
+SIGNING_KTS = '''    signingConfigs {
+        create("release") {
+            // Stable WinPilot release key, provided by GitHub Actions secrets (see README).
+            // Never a debug key and never a per-build key: that would break in-place updates.
+            System.getenv("WINPILOT_KEYSTORE_PATH")?.let { ksPath ->
+                storeFile = file(ksPath)
+                storePassword = System.getenv("WINPILOT_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WINPILOT_KEY_ALIAS")
+                keyPassword = System.getenv("WINPILOT_KEY_PASSWORD")
+            }
+        }
+    }
+'''
+
+SIGNING_GROOVY = '''    signingConfigs {
+        release {
+            // Stable WinPilot release key from GitHub Actions secrets (see README).
+            if (System.getenv('WINPILOT_KEYSTORE_PATH')) {
+                storeFile file(System.getenv('WINPILOT_KEYSTORE_PATH'))
+                storePassword System.getenv('WINPILOT_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('WINPILOT_KEY_ALIAS')
+                keyPassword System.getenv('WINPILOT_KEY_PASSWORD')
+            }
+        }
+    }
+'''
+
+
+def patch_signing(android_dir: pathlib.Path) -> None:
+    kts = android_dir / 'app/build.gradle.kts'
+    groovy = android_dir / 'app/build.gradle'
+    if kts.exists():
+        path, text = kts, kts.read_text(encoding='utf-8')
+        text, n = re.subn(r'^android\s*\{\n', 'android {\n' + SIGNING_KTS, text, count=1, flags=re.M)
+        if n != 1:
+            sys.exit('android { block not found in build.gradle.kts')
+        text, n = re.subn(r'signingConfig\s*=\s*signingConfigs\.getByName\("debug"\)',
+                          'signingConfig = signingConfigs.getByName("release")', text)
+        if n != 1:
+            sys.exit('debug signingConfig assignment not found in build.gradle.kts')
+    elif groovy.exists():
+        path, text = groovy, groovy.read_text(encoding='utf-8')
+        text, n = re.subn(r'^android\s*\{\n', 'android {\n' + SIGNING_GROOVY, text, count=1, flags=re.M)
+        if n != 1:
+            sys.exit('android { block not found in build.gradle')
+        text, n = re.subn(r'signingConfig\s+signingConfigs\.debug', 'signingConfig signingConfigs.release', text)
+        if n != 1:
+            sys.exit('debug signingConfig assignment not found in build.gradle')
+    else:
+        sys.exit('no app/build.gradle(.kts) found')
+    path.write_text(text, encoding='utf-8')
+    print(f'release signing patched: {path}')
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     android_dir = pathlib.Path(sys.argv[1]).resolve()
     patch_manifest(android_dir)
     patch_gradle(android_dir)
+    patch_signing(android_dir)
     patch_root_gradle(android_dir)
 
 

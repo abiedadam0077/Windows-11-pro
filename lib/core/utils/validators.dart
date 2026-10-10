@@ -9,6 +9,20 @@ abstract final class Validators {
     'administrator', 'guest', 'defaultaccount', 'wdagutilityaccount', 'system', 'admin',
   };
 
+  /// GitHub OAuth App Client IDs look like `Ov23li...` (or `Iv1.<16 hex>` for
+  /// GitHub Apps, or 20 hex characters for legacy apps). A client *secret* is
+  /// 40 hex characters and is rejected explicitly so users cannot paste it.
+  static final RegExp _clientId = RegExp(r'^(Ov[A-Za-z0-9]{14,}|Iv1\.[0-9a-f]{16}|[0-9a-f]{20})$');
+  static final RegExp _clientSecretLike = RegExp(r'^[0-9a-f]{40}$');
+
+  static bool isLikelyClientSecret(String value) => _clientSecretLike.hasMatch(value.trim());
+
+  static bool isValidClientId(String value) {
+    final v = value.trim();
+    if (isLikelyClientSecret(v)) return false;
+    return _clientId.hasMatch(v);
+  }
+
   static bool isValidWindowsUsername(String value) =>
       _windowsUser.hasMatch(value) && !_reservedUsers.contains(value.toLowerCase());
 

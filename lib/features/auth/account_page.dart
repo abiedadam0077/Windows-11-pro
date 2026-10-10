@@ -91,7 +91,7 @@ class AccountPage extends ConsumerWidget {
                 const SizedBox(height: 6),
                 Align(
                   alignment: AlignmentDirectional.centerStart,
-                  child: Text('OAuth: ${AppConfig.oauthScopes}',
+                  child: Text('OAuth device flow · ${AppConfig.oauthScopes}',
                       style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
                 ),
               ],

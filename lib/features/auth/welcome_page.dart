@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/errors/app_failure.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/services/oauth_service.dart';
 import '../../state/auth_state.dart';
 import '../../ui/widgets/brand_widgets.dart';
 import '../../ui/widgets/feedback_widgets.dart';
 
-/// Login screen. Uses the GitHub OAuth web flow (PKCE) in the system browser.
-/// WinPilot never shows a GitHub password field.
+/// Login screen. Uses GitHub's OAuth Device Flow: WinPilot shows a short code,
+/// the user approves it on github.com, and WinPilot polls until done.
+/// WinPilot never shows a GitHub password field and never holds a client secret.
 class WelcomePage extends ConsumerWidget {
   const WelcomePage({super.key});
 
@@ -64,7 +67,7 @@ class WelcomePage extends ConsumerWidget {
               const SizedBox(height: 14),
             ],
             if (signingIn) ...[
-              _Notice(text: s.t('welcome_connecting'), color: AppColors.electricBlue),
+              _DeviceCodePanel(code: auth.deviceCode),
               const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: () => ref.read(authProvider.notifier).cancelSignIn(),
@@ -89,6 +92,12 @@ class WelcomePage extends ConsumerWidget {
               ),
             const SizedBox(height: 18),
             Text(
+              s.t('welcome_device_note'),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 10),
+            Text(
               s.t('welcome_secure_note'),
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
@@ -107,6 +116,11 @@ class WelcomePage extends ConsumerWidget {
                 TextButton(
                   onPressed: () => context.push('/legal/privacy'),
                   child: Text(s.t('privacy')),
+                ),
+                Text('·', style: theme.textTheme.bodySmall),
+                TextButton(
+                  onPressed: () => context.push('/about'),
+                  child: Text(s.t('about_title')),
                 ),
               ],
             ),
@@ -158,4 +172,68 @@ class _Notice extends StatelessWidget {
           ],
         ),
       );
+}
+
+/// Shows the device code while GitHub waits for approval in the browser.
+class _DeviceCodePanel extends ConsumerWidget {
+  const _DeviceCodePanel({required this.code});
+
+  final DeviceCode? code;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final c = code;
+    if (c == null) {
+      return _Notice(text: s.t('welcome_connecting'), color: AppColors.electricBlue);
+    }
+    return GlassCard(
+      glow: AppColors.electricBlue,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(s.t('device_title'), style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text(s.t('device_steps'), style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 14),
+          Center(
+            child: SelectableText(
+              c.userCode,
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w900,
+                letterSpacing: 4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.copy_rounded, size: 18),
+                label: Text(s.t('device_copy')),
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: c.userCode));
+                  if (context.mounted) showAppSnack(context, s.t('device_copied'));
+                },
+              ),
+              GradientButton(
+                label: s.t('device_open'),
+                icon: Icons.open_in_new_rounded,
+                onPressed: () async {
+                  final ok = await ref.read(authProvider.notifier).openVerificationPage();
+                  if (!ok && context.mounted) showAppSnack(context, s.t('device_open_failed'));
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(s.t('device_expiry_note'), style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted)),
+        ],
+      ),
+    );
+  }
 }
