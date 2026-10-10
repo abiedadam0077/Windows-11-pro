@@ -1,0 +1,138 @@
+name: Tailscale join check (temporary)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SCRATCH: ${{ runner.temp }}
+    steps:
+      - name: 'WinPilot: join Tailscale'
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          exec > >(tee -a "$SCRATCH/join.out") 2>&1
+          set -euo pipefail
+          echo "WINPILOT|STAGE=tailscale"
+          if [ -z "$TS_AUTHKEY" ]; then
+            echo "WINPILOT|TS_STATE=missing_secret"; echo "::error::TS_AUTHKEY is missing."; exit 1
+          fi
+          # (secrets read through env are masked by the runner; the value is never echoed)
+          cat > "$SCRATCH/ts_classify.py" <<'PY'
+          import os, re, sys
+          # Turns the raw `tailscale up` output into a category plus the first error line.
+          # The auth key is removed from the text before anything is printed.
+          text = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+          key = os.environ.get('TS_AUTHKEY', '')
+          def redact(t):
+              if key:
+                  t = t.replace(key, 'tskey-***')
+              return re.sub(r'tskey-[A-Za-z0-9_-]+', 'tskey-***', t)
+          lines = [redact(l.strip()) for l in text.splitlines() if l.strip()]
+          err = next((l for l in lines if re.search(r'error|fail|invalid|expired|revoked|not defined|timed? ?out|denied|refused', l, re.I)), lines[-1] if lines else '')
+          low = ' '.join(lines).lower()
+          if 'flag provided but not defined' in low or 'unknown flag' in low or 'usage: tailscale up' in low:
+              cat = 'invalid_cli_flags'
+          elif 'failed to connect to local tailscaled' in low or 'is tailscaled running' in low or 'tailscaled' in low and 'not running' in low:
+              cat = 'daemon_not_running'
+          elif 'expired' in low:
+              cat = 'expired_key'
+          elif 'revoked' in low or 'already used' in low or 'deleted' in low:
+              cat = 'revoked_or_used_key'
+          elif 'invalid' in low and ('key' in low or 'authkey' in low):
+              cat = 'invalid_key'
+          elif 'timed out' in low or 'timeout' in low:
+              cat = 'join_timeout'
+          elif re.search(r'no such host|connection refused|network is unreachable|i/o timeout|dial tcp|tls|eof|control server', low):
+              cat = 'network_or_control_plane'
+          else:
+              cat = 'unknown'
+          print('WINPILOT|TS_FAILURE=' + cat)
+          print('WINPILOT|TS_ERROR=' + err[:300])
+          PY
+          curl -fsSL https://tailscale.com/install.sh | sudo sh >/dev/null
+          echo "WINPILOT|TS_VERSION=$(tailscale version 2>/dev/null | head -1 || echo unknown)"
+          umask 077
+          # The key goes to a 0600 file and is passed with --auth-key=file:, never on the command line.
+          keyfile="$SCRATCH/ts-authkey"
+          printf '%s' "$TS_AUTHKEY" > "$keyfile"
+          # Only flags that exist in `tailscale up` (cmd/tailscale/cli/up.go). Ephemeral is a property of
+          # the auth key, set when the key is created in the Tailscale admin console; it is not a flag.
+          up_rc=0
+          sudo tailscale up --auth-key="file:$keyfile" --hostname="winpilot-$GITHUB_RUN_ID" \
+               --accept-dns=false --timeout=90s >"$SCRATCH/ts-up.log" 2>&1 || up_rc=$?
+          rm -f "$keyfile"
+          if [ "$up_rc" -ne 0 ]; then
+            echo "WINPILOT|TS_STATE=join_failed"
+            echo "WINPILOT|TS_UP_EXIT=$up_rc"
+            python3 "$SCRATCH/ts_classify.py" "$SCRATCH/ts-up.log" || true
+            echo "::error::Tailscale did not join the tailnet. See WINPILOT|TS_FAILURE and TS_ERROR in the step log for the real cause."
+            exit 1
+          fi
+          ip=$(tailscale ip -4 | head -1 || true)
+          if ! python3 -c 'import ipaddress,sys; a=ipaddress.ip_address(sys.argv[1]); sys.exit(0 if a in ipaddress.ip_network("100.64.0.0/10") else 1)' "$ip" 2>/dev/null; then
+            echo "WINPILOT|TS_STATE=no_tailscale_ip"; echo "::error::Tailscale did not return a 100.64.0.0/10 address."; exit 1
+          fi
+          # Prove RDP answers on the tailnet address itself. Docker publishes 3389 on the runner,
+          # so this is the path a client on the tailnet uses.
+          ok=false
+          cat > "$SCRATCH/rdp_probe.py" <<'PY'
+          import socket, sys
+          # X.224 connection request with an RDP negotiation request (TLS + CredSSP).
+          # A real RDP server answers with an X.224 Connection Confirm (TPKT 03 00, code 0xD0).
+          # A port that only accepts TCP (Docker proxy before Windows boots) closes the socket.
+          req = bytes.fromhex('030000130ee000000000000100080003000000')
+          host = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
+          try:
+              s = socket.create_connection((host, 3389), timeout=8)
+              s.sendall(req)
+              data = s.recv(64)
+              s.close()
+          except OSError:
+              sys.exit(1)
+          ok = len(data) >= 6 and data[:2] == b'\x03\x00' and (data[5] & 0xF0) == 0xD0
+          sys.exit(0 if ok else 1)
+          PY
+          for _ in $(seq 1 6); do
+            if python3 "$SCRATCH/rdp_probe.py" "$ip" 2>/dev/null; then ok=true; break; fi
+            sleep 10
+          done
+          if [ "$ok" != true ]; then
+            echo "WINPILOT|TS_STATE=rdp_unreachable"
+            echo "WINPILOT|TS_RDP_PROBE=failed"
+            echo "::error::Tailscale is up but TCP 3389 did not answer on the tailnet address. RDP is not reachable."; exit 1
+          fi
+          echo "WINPILOT|TS_STATE=connected"
+          echo "WINPILOT|TS_IP=$ip"
+          echo "WINPILOT|TS_RDP_PROBE=ok"
+          echo "WINPILOT|TS_NOTE=This address belongs to the GitHub runner for this session only; Docker forwards TCP 3389 to Windows."
+      - name: 'Publish redacted result'
+        if: always()
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          f="$SCRATCH/join.out"
+          [ -f "$f" ] || echo "no output captured" > "$f"
+          sed -i -E 's/tskey-[A-Za-z0-9_-]+/tskey-***/g' "$f"
+          if [ -n "$TS_AUTHKEY" ] && grep -qF -- "$TS_AUTHKEY" "$f"; then echo "ABORT: key text found in output"; exit 1; fi
+          ip=$(tailscale ip -4 2>/dev/null | head -1 || true)
+          state=$(grep -o 'TS_STATE=[a-z_]*' "$f" | tail -1 | cut -d= -f2 || true)
+          failure=$(grep -o 'TS_FAILURE=[a-z_]*' "$f" | tail -1 | cut -d= -f2 || true)
+          err=$(grep -o 'TS_ERROR=.*' "$f" | tail -1 | cut -d= -f2- || true)
+          joined=no
+          if grep -q 'TS_RDP_PROBE\|TS_STATE=rdp_unreachable' "$f" && [ -n "$ip" ]; then joined=yes; fi
+          if [ -z "$state" ] && [ -n "$ip" ]; then joined=yes; fi
+          desc="joined=$joined ip=${ip:-none} state=${state:-none} failure=${failure:-none} err=${err:-}"
+          desc=$(printf '%s' "$desc" | cut -c1-140)
+          st=failure
+          if [ "$joined" = yes ]; then st=success; fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$st" -f context="tailscale-join-check" -f description="$desc" >/dev/null
+          echo "STATUS: $st $desc"
+      - name: 'Logout test node'
+        if: always()
+        run: sudo tailscale logout >/dev/null 2>&1 || true
