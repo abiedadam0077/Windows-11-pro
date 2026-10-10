@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/config/app_config.dart';
 import '../../core/errors/app_failure.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
@@ -31,21 +34,25 @@ enum SecretSaveState { idle, saving, saved, failed }
 const _kWinPassword = 'WINPILOT_WIN_PASSWORD';
 const _kBackupPassword = 'BACKUP_PASSWORD';
 const _kAccessPassword = 'ACCESS_PASSWORD';
+const _kTsKey = 'TS_AUTHKEY';
 
 class _SecretsPageState extends ConsumerState<SecretsPage> {
   late final TextEditingController _user;
   final _winPw = TextEditingController();
   final _backupPw = TextEditingController();
   final _accessPw = TextEditingController();
+  final _tsPw = TextEditingController();
   final _shown = <String, bool>{
     _kWinPassword: false,
     _kBackupPassword: false,
     _kAccessPassword: false,
+    _kTsKey: false,
   };
   final _state = <String, SecretSaveState>{
     _kWinPassword: SecretSaveState.idle,
     _kBackupPassword: SecretSaveState.idle,
     _kAccessPassword: SecretSaveState.idle,
+    _kTsKey: SecretSaveState.idle,
   };
   String? _error;
   bool _busy = false;
@@ -62,12 +69,14 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
     _winPw.dispose();
     _backupPw.dispose();
     _accessPw.dispose();
+    _tsPw.dispose();
     super.dispose();
   }
 
   TextEditingController _controller(String name) => switch (name) {
         _kWinPassword => _winPw,
         _kBackupPassword => _backupPw,
+        _kTsKey => _tsPw,
         _ => _accessPw,
       };
 
@@ -87,6 +96,9 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
     if (PasswordPolicy.violations(_accessPw.text).isNotEmpty) {
       return s.t('secrets_access_weak');
     }
+    if (_tsPw.text.trim().isNotEmpty && !Validators.isValidTailscaleAuthKey(_tsPw.text)) {
+      return s.t('secrets_ts_invalid');
+    }
     return null;
   }
 
@@ -105,8 +117,10 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
       _error = null;
     });
     // Only secrets not yet confirmed are written, so a retry does not re-send the others.
-    for (final name in [_kWinPassword, _kBackupPassword, _kAccessPassword]) {
+    for (final name in [_kWinPassword, _kBackupPassword, _kAccessPassword, _kTsKey]) {
       if (_state[name] == SecretSaveState.saved) continue;
+      // TS_AUTHKEY is optional: skipped unless the user typed one.
+      if (name == _kTsKey && _tsPw.text.trim().isEmpty) continue;
       setState(() => _state[name] = SecretSaveState.saving);
       String? failure;
       try {
@@ -114,7 +128,7 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
           owner: owner,
           repo: repo,
           name: name,
-          value: _controller(name).text,
+          value: name == _kTsKey ? _controller(name).text.trim() : _controller(name).text,
         );
         if (!verified) failure = s.t('secrets_not_verified', {'name': name});
       } on AppFailure catch (e) {
@@ -299,6 +313,25 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
               title: s.t('secrets_access_title'),
               description: s.t('secrets_access_desc'),
             ),
+            SectionTitle(s.t('secrets_ts_section')),
+            _passwordCard(
+              s,
+              name: _kTsKey,
+              title: s.t('secrets_ts_title'),
+              description: s.t('secrets_ts_desc'),
+              warning: s.t('secrets_ts_warning'),
+            ),
+            GlassCard(
+              child: OutlinedButton.icon(
+                onPressed: () => launchUrl(
+                  Uri.parse(AppConfig.tailscaleAdminKeysUrl),
+                  mode: LaunchMode.externalApplication,
+                ),
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: Text(s.t('secrets_ts_open_keys')),
+              ),
+            ),
+            const SizedBox(height: 12),
             if (_error != null) ...[
               const SizedBox(height: 4),
               Text(_error!, style: const TextStyle(color: AppColors.danger)),

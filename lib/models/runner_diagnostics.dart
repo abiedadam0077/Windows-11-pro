@@ -1,7 +1,19 @@
 import 'dart:convert';
+import '../core/utils/validators.dart';
 
 /// Facts reported by the workflow itself through `WINPILOT|KEY=VALUE` lines.
 /// Nothing here is assumed: a value is null until the runner printed it.
+/// Verdict for the Tailscale link of a session. Only [verified] means "connected".
+enum TailscaleStatus {
+  notReported,
+  verified,
+  missingSecret,
+  invalidSecret,
+  joinFailed,
+  rdpUnreachable,
+  requiresRdp,
+}
+
 class RunnerDiagnostics {
   const RunnerDiagnostics({
     this.osName,
@@ -18,6 +30,7 @@ class RunnerDiagnostics {
     this.rdpPortListening,
     this.tailscaleState,
     this.tailscaleIp,
+    this.tailscaleRdpProbe,
     this.stage,
     this.sessionEndsAt,
     this.sessionMinutes,
@@ -41,11 +54,39 @@ class RunnerDiagnostics {
   final bool? rdpPortListening;
   final String? tailscaleState;
   final String? tailscaleIp;
+  /// 'ok' only when the workflow reached TCP 3389 on the tailnet IP itself.
+  final String? tailscaleRdpProbe;
   final String? stage;
   final DateTime? sessionEndsAt;
   final int? sessionMinutes;
   final DateTime? lastHeartbeat;
   final String? error;
+
+  /// Tailscale status as a verdict. "verified" needs BOTH a Tailscale IP in 100.64.0.0/10
+  /// AND the workflow's own TCP 3389 probe on that address. Anything else is not claimed.
+  TailscaleStatus get tailscaleStatus {
+    final st = tailscaleState;
+    if (st == null) return TailscaleStatus.notReported;
+    switch (st) {
+      case 'connected':
+        final ip = tailscaleIp;
+        if (ip == null || !Validators.isTailscaleIpv4(ip)) return TailscaleStatus.notReported;
+        return tailscaleRdpProbe == 'ok' ? TailscaleStatus.verified : TailscaleStatus.rdpUnreachable;
+      case 'missing_secret':
+        return TailscaleStatus.missingSecret;
+      case 'invalid_secret':
+        return TailscaleStatus.invalidSecret;
+      case 'join_failed':
+      case 'no_tailscale_ip':
+        return TailscaleStatus.joinFailed;
+      case 'rdp_unreachable':
+        return TailscaleStatus.rdpUnreachable;
+      case 'requires_rdp':
+        return TailscaleStatus.requiresRdp;
+      default:
+        return TailscaleStatus.notReported;
+    }
+  }
 
   bool get hasAnyData => osName != null || architecture != null || tailscaleState != null || rdpReady != null;
   bool get isX64 => const {'X64', 'AMD64'}.contains(architecture?.toUpperCase());
@@ -88,6 +129,7 @@ class RunnerDiagnostics {
       rdpPortListening: flag('RDP_PORT_LISTENING'),
       tailscaleState: values['TS_STATE'],
       tailscaleIp: values['TS_IP'],
+      tailscaleRdpProbe: values['TS_RDP_PROBE'],
       stage: values['STAGE'],
       sessionEndsAt: time('SESSION_ENDS_AT'),
       sessionMinutes: int.tryParse(values['SESSION_MINUTES'] ?? ''),

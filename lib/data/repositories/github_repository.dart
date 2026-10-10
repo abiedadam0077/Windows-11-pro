@@ -72,7 +72,7 @@ class GitHubRepository {
         repo: repo.name,
         path: path,
         content: content,
-        message: 'Add WinPilot Windows 11 ARM64 verification workflow',
+        message: 'Add WinPilot Windows 11 Pro x64 (Docker + KVM) workflow',
         branch: repo.defaultBranch,
         sha: existingSha,
       );
@@ -153,9 +153,15 @@ class GitHubRepository {
       }
     }
 
-    final artifacts = run.phase.isTerminal
-        ? await _api.listArtifacts(owner, repo, runId)
-        : const <ArtifactInfo>[];
+    // Artifacts are optional for the status card: a failure here must not hide the run status.
+    var artifacts = const <ArtifactInfo>[];
+    if (run.phase.isTerminal) {
+      try {
+        artifacts = await _api.listArtifacts(owner, repo, runId);
+      } on AppFailure catch (e) {
+        if (e.kind == FailureKind.unauthorized || e.kind == FailureKind.forbidden) rethrow;
+      }
+    }
 
     return SessionSnapshot(
       run: run,
@@ -176,7 +182,14 @@ class GitHubRepository {
     final jobs = await _api.listJobs(owner, repo, runId);
     final job = _pickJob(jobs);
     if (job == null) return const [];
-    final text = await _api.jobLogs(owner, repo, job.id);
+    final String text;
+    try {
+      text = await _api.jobLogs(owner, repo, job.id);
+    } on AppFailure catch (e) {
+      // Not published yet or expired: an empty list shows the "no logs yet" state, not a network error.
+      if (e.kind == FailureKind.notFound) return const [];
+      rethrow;
+    }
     final lines = SecretRedactor.redact(text).split('\n');
     if (lines.length <= AppConfig.maxLogLines) return lines;
     return lines.sublist(lines.length - AppConfig.maxLogLines);

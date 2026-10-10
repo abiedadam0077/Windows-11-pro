@@ -33,7 +33,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
   final _pwCtrl = TextEditingController();
   bool _showPw = false;
   bool _enableRdp = false;
-  bool _useTs = true;
+  bool _useTs = false;
   int _minutes = AppConfig.defaultSessionMinutes;
   bool _confirmed = false;
   bool _checkingSecrets = false;
@@ -206,7 +206,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
             workflowPath: st.workflowPath,
             windowsUser: _userCtrl.text.trim(),
             enableRdp: _enableRdp,
-            useTailscale: _useTs,
+            useTailscale: _useTs && _tsSecretPresent == true,
             sessionMinutes: _minutes,
           ),
         );
@@ -624,7 +624,8 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
         value: _useTs,
         title: Text(s.t('setup_ts_toggle')),
         subtitle: Text(s.t('setup_ts_toggle_desc')),
-        onChanged: (v) => setState(() => _useTs = v),
+        // Tailscale can only be enabled once the TS_AUTHKEY secret exists in the repository.
+        onChanged: _tsSecretPresent == true ? (v) => setState(() => _useTs = v) : null,
       ),
       if (_useTs) ...[
         GlassCard(
@@ -690,7 +691,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
           children: [
             InfoRow(label: s.t('setup_review_repo'), value: repo?.fullName ?? '—'),
             InfoRow(label: s.t('setup_review_system'), value: 'Windows 11'),
-            InfoRow(label: s.t('setup_review_arch'), value: 'ARM64 (windows-11-arm)'),
+            InfoRow(label: s.t('setup_review_arch'), value: s.t('target_system_value')),
             InfoRow(label: s.t('setup_review_user'), value: _userCtrl.text.trim()),
             InfoRow(label: s.t('setup_review_rdp'), value: _enableRdp ? s.t('on') : s.t('off')),
             InfoRow(label: s.t('setup_review_tailscale'), value: _useTs ? s.t('on') : s.t('off')),

@@ -49,6 +49,14 @@ void main() {
       expect(text.substring(restoreStart, restoreEnd), isNot(contains('release delete')));
     });
 
+    test('Tailscale fails loudly: no silent success without key, probe, or RDP', () {
+      expect(text, contains('WINPILOT|TS_STATE=missing_secret'));
+      expect(text, contains('WINPILOT|TS_STATE=rdp_unreachable'));
+      expect(text, contains('WINPILOT|TS_RDP_PROBE=ok'));
+      expect(text, contains('TCP 3389 did not answer'));
+      expect(text, isNot(contains('TS_AUTHKEY is not set. Tailscale is not connected.')));
+    });
+
     test('Tailscale is opt-in by default', () {
       expect(text, contains("default: false\n        type: boolean\n      session_minutes"));
     });

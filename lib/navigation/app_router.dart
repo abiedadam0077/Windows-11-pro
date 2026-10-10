@@ -16,6 +16,7 @@ import '../features/session/log_viewer_page.dart';
 import '../features/session/session_history_page.dart';
 import '../features/session/session_progress_page.dart';
 import '../features/secrets/secrets_page.dart';
+import '../features/tailscale/tailscale_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/setup/setup_wizard_page.dart';
 import '../features/splash/splash_page.dart';
@@ -70,6 +71,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/setup', builder: (context, state) => const SetupWizardPage()),
       GoRoute(path: '/rdp', builder: (context, state) => const RdpGuidePage()),
       GoRoute(path: '/secrets', builder: (context, state) => const SecretsPage()),
+      GoRoute(path: '/tailscale', builder: (context, state) => const TailscalePage()),
       GoRoute(
         path: '/session/:runId',
         builder: (context, state) => SessionProgressPage(

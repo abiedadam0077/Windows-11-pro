@@ -352,14 +352,35 @@ class GitHubApi {
       responseType: ResponseType.plain,
     );
     if (res.statusCode == 200) return (res.data ?? '').toString();
+    final status = res.statusCode ?? 0;
+    if (status == 404 || status == 410) {
+      // The job log is not published yet, or was removed by retention.
+      throw const AppFailure(FailureKind.notFound, detail: 'job log not available');
+    }
+    if (status == 401 || status == 403) {
+      throw failureFrom(res);
+    }
     final location = res.headers.value('location');
-    if (location == null) return '';
+    if (location == null) {
+      if (status >= 200 && status < 300) return (res.data ?? '').toString();
+      throw failureFrom(res);
+    }
     try {
+      // The pre-signed URL can expire; a 403/404 here is a log-link problem,
+      // not a lost connection, so statuses are read instead of thrown.
       final body = await _external.get<String>(
         location,
-        options: Options(responseType: ResponseType.plain),
+        options: Options(
+          responseType: ResponseType.plain,
+          validateStatus: (_) => true,
+        ),
       );
-      return body.data ?? '';
+      final code = body.statusCode ?? 0;
+      if (code >= 200 && code < 300) return body.data ?? '';
+      if (code == 403 || code == 404 || code == 410) {
+        throw const AppFailure(FailureKind.notFound, detail: 'job log link expired');
+      }
+      throw AppFailure(FailureKind.server, detail: 'job log download HTTP $code');
     } on DioException catch (e) {
       throw networkFailure(e);
     }

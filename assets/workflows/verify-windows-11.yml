@@ -119,7 +119,19 @@ jobs:
           if [ "${#ACCESS_PASSWORD}" -lt 12 ]; then
             echo "WINPILOT|ERROR=weak_access_secret"; echo "::error::ACCESS_PASSWORD must be at least 12 characters."; exit 1
           fi
-          if [ "$USE_TAILSCALE" = "true" ] && [ -n "$TS_AUTHKEY" ]; then
+          if [ "$USE_TAILSCALE" = "true" ]; then
+            if [ -z "$TS_AUTHKEY" ]; then
+              echo "WINPILOT|TS_STATE=missing_secret"
+              echo "::error::Tailscale was requested but the TS_AUTHKEY secret is not set. Save it in WinPilot (Tailscale page) or turn Tailscale off."; exit 1
+            fi
+            if ! [[ "$TS_AUTHKEY" =~ ^tskey-[A-Za-z0-9_-]+$ ]]; then
+              echo "WINPILOT|TS_STATE=invalid_secret"
+              echo "::error::TS_AUTHKEY does not look like a Tailscale auth key (expected tskey-...)."; exit 1
+            fi
+            if [ "$ENABLE_RDP" != "true" ]; then
+              echo "WINPILOT|TS_STATE=requires_rdp"
+              echo "::error::Tailscale needs RDP enabled: the address is only reported after TCP 3389 answers."; exit 1
+            fi
             echo "::add-mask::$TS_AUTHKEY"
             echo "WINPILOT|TS_SECRET=present"
           else
@@ -387,19 +399,38 @@ jobs:
           set -euo pipefail
           echo "WINPILOT|STAGE=tailscale"
           if [ -z "$TS_AUTHKEY" ]; then
-            echo "WINPILOT|TS_STATE=missing_secret"
-            echo "::warning::TS_AUTHKEY is not set. Tailscale is not connected."
-            exit 0
+            echo "WINPILOT|TS_STATE=missing_secret"; echo "::error::TS_AUTHKEY is missing."; exit 1
           fi
+          echo "::add-mask::$TS_AUTHKEY"
           curl -fsSL https://tailscale.com/install.sh | sudo sh >/dev/null
-          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="winpilot-$GITHUB_RUN_ID" --accept-dns=false --timeout=90s
+          umask 077
+          if ! sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="winpilot-$GITHUB_RUN_ID" \
+               --ephemeral --accept-dns=false --timeout=90s >"$SCRATCH/ts-up.log" 2>&1; then
+            echo "WINPILOT|TS_STATE=join_failed"
+            echo "::error::Tailscale could not join the tailnet. Check that the auth key is valid, not expired and not revoked."
+            sed 's/tskey-[A-Za-z0-9_-]*/tskey-***/g' "$SCRATCH/ts-up.log" | tail -n 3 || true
+            exit 1
+          fi
           ip=$(tailscale ip -4 | head -1 || true)
           if ! python3 -c 'import ipaddress,sys; a=ipaddress.ip_address(sys.argv[1]); sys.exit(0 if a in ipaddress.ip_network("100.64.0.0/10") else 1)' "$ip" 2>/dev/null; then
             echo "WINPILOT|TS_STATE=no_tailscale_ip"; echo "::error::Tailscale did not return a 100.64.0.0/10 address."; exit 1
           fi
+          # Prove RDP answers on the tailnet address itself. Docker publishes 3389 on the runner,
+          # so this is the path a client on the tailnet uses.
+          ok=false
+          for _ in $(seq 1 6); do
+            if timeout 5 bash -c "</dev/tcp/$ip/3389" 2>/dev/null; then ok=true; break; fi
+            sleep 10
+          done
+          if [ "$ok" != true ]; then
+            echo "WINPILOT|TS_STATE=rdp_unreachable"
+            echo "WINPILOT|TS_RDP_PROBE=failed"
+            echo "::error::Tailscale is up but TCP 3389 did not answer on the tailnet address. RDP is not reachable."; exit 1
+          fi
           echo "WINPILOT|TS_STATE=connected"
           echo "WINPILOT|TS_IP=$ip"
-          echo "WINPILOT|TS_NOTE=The phone must probe TCP $ip:3389 to confirm RDP is reachable."
+          echo "WINPILOT|TS_RDP_PROBE=ok"
+          echo "WINPILOT|TS_NOTE=This address belongs to the GitHub runner for this session only; Docker forwards TCP 3389 to Windows."
 
       - name: 'WinPilot: session'
         run: |

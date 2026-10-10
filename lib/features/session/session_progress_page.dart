@@ -116,7 +116,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
                   ]),
                   const SizedBox(height: 8),
                   Text(
-                    '${active.request.windowsUser} · Windows 11 ARM64 · '
+                    '${active.request.windowsUser} · ${s.t('target_system_short')} · '
                     '${s.t('setup_minutes_value', {'m': '${active.request.sessionMinutes}'})}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
                   ),

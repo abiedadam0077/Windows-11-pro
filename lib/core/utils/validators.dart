@@ -26,6 +26,10 @@ abstract final class Validators {
   static bool isValidWindowsUsername(String value) =>
       _windowsUser.hasMatch(value) && !_reservedUsers.contains(value.toLowerCase());
 
+  /// Tailscale auth keys look like `tskey-auth-<id>-<secret>`. The app never displays the value back.
+  static final RegExp _tsAuthKey = RegExp(r'^tskey-[A-Za-z0-9_-]{8,}$');
+  static bool isValidTailscaleAuthKey(String value) => _tsAuthKey.hasMatch(value.trim());
+
   static bool isValidIpv4(String ip) {
     final m = _ipv4.firstMatch(ip.trim());
     if (m == null) return false;

@@ -118,15 +118,14 @@ class DashboardPage extends ConsumerWidget {
             : AppColors.textMuted;
 
     final verified = diag.hasAnyData && diag.osName != null;
-    final tsState = diag.tailscaleState;
-    final (tsText, tsColor) = switch (tsState) {
-      null => (s.t('dash_ts_unknown'), AppColors.textMuted),
-      'Running' => (s.t('dash_ts_running'), AppColors.success),
-      'NeedsLogin' => (s.t('dash_ts_needs_login'), AppColors.warning),
-      'disabled' => (s.t('dash_ts_disabled'), AppColors.textMuted),
-      'missing_secret' => (s.t('dash_ts_missing_secret'), AppColors.warning),
-      'install_failed' => (s.t('dash_ts_install_failed'), AppColors.danger),
-      final other => (other, AppColors.warning),
+    final (tsText, tsColor) = switch (diag.tailscaleStatus) {
+      TailscaleStatus.verified => (s.t('ts_status_verified'), AppColors.success),
+      TailscaleStatus.missingSecret => (s.t('dash_ts_missing_secret'), AppColors.warning),
+      TailscaleStatus.invalidSecret => (s.t('ts_status_invalid_secret'), AppColors.danger),
+      TailscaleStatus.joinFailed => (s.t('ts_status_join_failed'), AppColors.danger),
+      TailscaleStatus.rdpUnreachable => (s.t('ts_status_rdp_unreachable'), AppColors.warning),
+      TailscaleStatus.requiresRdp => (s.t('ts_status_requires_rdp'), AppColors.warning),
+      TailscaleStatus.notReported => (s.t('dash_ts_unknown'), AppColors.textMuted),
     };
 
     final ip = diag.tailscaleIp;
@@ -218,7 +217,7 @@ class DashboardPage extends ConsumerWidget {
         label: s.t('dash_card_tailscale'),
         value: tsText,
         color: tsColor,
-        onTap: () => context.push('/rdp'),
+        onTap: () => context.push('/tailscale'),
       ),
       _StatusTile(
         icon: Icons.lan_rounded,
@@ -364,7 +363,7 @@ class _ActiveCard extends ConsumerWidget {
               style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
           const SizedBox(height: 4),
           Text(
-            '${active.request.windowsUser} · Windows 11 ARM64 · ${s.t('setup_minutes_value', {'m': '${active.request.sessionMinutes}'})}',
+            '${active.request.windowsUser} · ${s.t('target_system_short')} · ${s.t('setup_minutes_value', {'m': '${active.request.sessionMinutes}'})}',
             style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
           ),
           const SizedBox(height: 14),
