@@ -33,26 +33,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check release signing secrets
-        env:
-          KS_B64: ${{ secrets.WINPILOT_KEYSTORE_B64 }}
-          KS_PASS: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
-          KEY_PASS: ${{ secrets.WINPILOT_KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
-        run: |
-          missing=0
-          for name in KS_B64 KS_PASS KEY_PASS KEY_ALIAS; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Release signing secret for $name is missing. Run tool/release/create_release_keystore.sh once (see README)."
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "Refusing to build an APK without the stable release key."
-            exit 1
-          fi
-          echo "Release signing secrets are present."
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -81,6 +61,26 @@ jobs:
           tool/ci/run_logged.sh scaffold flutter create --platforms=android --org com.winpilot --project-name winpilot /tmp/wp_gen
           cp -r /tmp/wp_gen/android ./android
           tool/ci/run_logged.sh patch python3 tool/ci/patch_android.py android
+
+      - name: Check release signing secrets
+        env:
+          KS_B64: ${{ secrets.WINPILOT_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.WINPILOT_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
+        run: |
+          missing=0
+          for name in KS_B64 KS_PASS KEY_PASS KEY_ALIAS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Release signing secret for $name is missing. Run tool/release/create_release_keystore.sh once (see README)."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing to build an APK without the stable release key."
+            exit 1
+          fi
+          echo "Release signing secrets are present."
 
       - name: Decode release keystore
         env:
