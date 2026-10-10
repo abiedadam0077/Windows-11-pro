@@ -42,7 +42,11 @@ void main() {
     test('restore never deletes existing backups and stops on low storage', () {
       expect(text, contains('RESTORE_STATE=low_storage'));
       expect(text, contains('failed_low_storage'));
-      expect(text, isNot(contains('gh release delete "\$tag"')));
+      final restoreStart = text.indexOf('WinPilot: restore the latest valid backup');
+      final restoreEnd = text.indexOf('WinPilot: start Windows 11 Pro VM');
+      expect(restoreStart, greaterThan(0));
+      expect(restoreEnd, greaterThan(restoreStart));
+      expect(text.substring(restoreStart, restoreEnd), isNot(contains('release delete')));
     });
 
     test('Tailscale is opt-in by default', () {
