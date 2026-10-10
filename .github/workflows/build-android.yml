@@ -91,15 +91,17 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish pre-release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+      - name: Publish rolling preview release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="winpilot-android-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" dist/WinPilot-release.apk dist/WinPilot-release.apk.sha256 \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "WinPilot Android build ${GITHUB_RUN_NUMBER}" \
-            --notes "Release APK built by GitHub Actions from commit ${GITHUB_SHA}. Debug-style signing; verify the SHA-256 before installing."
+          TAG=winpilot-android-preview
+          NOTES="Preview APK built by GitHub Actions from commit ${GITHUB_SHA} (run ${GITHUB_RUN_NUMBER}). Signed with the default debug key: verify the SHA-256 before installing. Not a Play Store build."
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "WinPilot Android preview" --notes "$NOTES"
+          fi
+          gh release upload "$TAG" dist/WinPilot-release.apk dist/WinPilot-release.apk.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$NOTES" --prerelease
