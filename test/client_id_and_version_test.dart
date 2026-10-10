@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:winpilot/core/config/app_config.dart';
 import 'package:winpilot/core/utils/app_version.dart';
 import 'package:winpilot/core/utils/validators.dart';
 import 'package:winpilot/data/services/update_service.dart';
@@ -10,6 +11,10 @@ void main() {
       expect(Validators.isValidClientId('Ov23liAbCdEfGhIjKlMn'), isTrue);
       expect(Validators.isValidClientId('  Ov23liAbCdEfGhIjKlMn  '), isTrue);
       expect(Validators.isValidClientId('0123456789abcdef0123'), isTrue);
+    });
+
+    test('the bundled default Client ID is valid', () {
+      expect(Validators.isValidClientId(AppConfig.defaultClientId), isTrue);
     });
 
     test('rejects empty and malformed values', () {

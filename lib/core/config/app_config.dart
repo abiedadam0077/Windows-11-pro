@@ -10,7 +10,12 @@ abstract final class AppConfig {
   // OAuth: GitHub Device Flow. Needs only the public Client ID; no client
   // secret, no redirect URI, no custom URL scheme.
   static const oauthScopes = 'repo workflow read:user';
-  static const defaultClientId = String.fromEnvironment('GITHUB_CLIENT_ID');
+  // Public OAuth App Client ID (not a secret). A build-time define or the
+  // Settings value overrides it.
+  static const defaultClientId = String.fromEnvironment(
+    'GITHUB_CLIENT_ID',
+    defaultValue: 'Ov23lia2WyFusPFukYaK',
+  );
 
   // GitHub endpoints.
   static const githubWebBase = 'https://github.com';

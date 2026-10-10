@@ -118,14 +118,17 @@ jobs:
 
       - name: Build signed release APK
         env:
-          GITHUB_CLIENT_ID: ${{ vars.WINPILOT_GITHUB_CLIENT_ID }}
+          WINPILOT_CLIENT_ID_VAR: ${{ vars.WINPILOT_GITHUB_CLIENT_ID }}
           WINPILOT_KEYSTORE_PASSWORD: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
           WINPILOT_KEY_PASSWORD: ${{ secrets.WINPILOT_KEY_PASSWORD }}
           WINPILOT_KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
         run: |
+          DEFINES=()
+          if [ -n "$WINPILOT_CLIENT_ID_VAR" ]; then
+            DEFINES+=("--dart-define=GITHUB_CLIENT_ID=$WINPILOT_CLIENT_ID_VAR")
+          fi
           tool/ci/run_logged.sh build flutter build apk --release \
-            --build-name=$VERSION_NAME --build-number=$VERSION_CODE \
-            --dart-define=GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
+            --build-name=$VERSION_NAME --build-number=$VERSION_CODE "${DEFINES[@]}"
 
       - name: Verify APK package, version and signature
         env:
