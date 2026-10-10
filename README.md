@@ -23,6 +23,12 @@ It does not start or manage any VPS or other provider, and it never substitutes 
 - `windows-11-arm` may be unavailable for private repositories depending on your GitHub plan. If no runner is
   available, the job waits in the queue and the app says so.
 
+## Download the APK
+
+The latest APK built from this branch is published as a rolling pre-release:
+<https://github.com/abiedadam0077/Windows-11-pro/releases/tag/winpilot-android-preview>
+(`WinPilot-release.apk`, with `WinPilot-release.apk.sha256` next to it). Check the SHA-256 before installing.
+
 ## One-time setup
 
 1. **Create a GitHub OAuth App** (Settings → Developer settings → OAuth Apps). Use the callback URL
