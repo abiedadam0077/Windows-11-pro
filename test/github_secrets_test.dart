@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pinenacl/api.dart';
+import 'package:pinenacl/x25519.dart' show SealedBox;
 import 'package:winpilot/core/utils/validators.dart';
 import 'package:winpilot/data/services/github_secrets.dart';
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:pinenacl/api.dart';
+import 'package:pinenacl/x25519.dart' show SealedBox;
 
 import '../../core/errors/app_failure.dart';
 import 'github_api.dart';
