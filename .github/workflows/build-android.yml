@@ -43,27 +43,27 @@ jobs:
       - name: Generate Android project scaffolding
         run: |
           rm -rf /tmp/wp_gen android
-          flutter create --platforms=android --org com.winpilot --project-name winpilot /tmp/wp_gen
+          tool/ci/run_logged.sh scaffold flutter create --platforms=android --org com.winpilot --project-name winpilot /tmp/wp_gen
           cp -r /tmp/wp_gen/android ./android
-          python3 tool/ci/patch_android.py android
+          tool/ci/run_logged.sh patch python3 tool/ci/patch_android.py android
 
       - name: Check i18n keys
-        run: python3 tool/check_i18n_keys.py
+        run: tool/ci/run_logged.sh i18n python3 tool/check_i18n_keys.py
 
       - name: Resolve dependencies
-        run: flutter pub get
+        run: tool/ci/run_logged.sh pub-get flutter pub get
 
       - name: Analyze
-        run: flutter analyze --no-fatal-infos
+        run: tool/ci/run_logged.sh analyze flutter analyze --no-fatal-infos
 
       - name: Test
-        run: flutter test
+        run: tool/ci/run_logged.sh test flutter test --reporter expanded
 
       - name: Build release APK
         env:
           GITHUB_CLIENT_ID: ${{ vars.WINPILOT_GITHUB_CLIENT_ID }}
         run: |
-          flutter build apk --release --dart-define=GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
+          tool/ci/run_logged.sh build flutter build apk --release --dart-define=GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
 
       - name: Verify APK metadata
         run: |
