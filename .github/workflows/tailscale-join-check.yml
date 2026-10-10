@@ -1,6 +1,9 @@
 name: Tailscale join check (temporary)
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tailscale-join-check.yml'
 permissions:
   contents: read
   statuses: write
@@ -125,8 +128,7 @@ jobs:
           failure=$(grep -o 'TS_FAILURE=[a-z_]*' "$f" | tail -1 | cut -d= -f2 || true)
           err=$(grep -o 'TS_ERROR=.*' "$f" | tail -1 | cut -d= -f2- || true)
           joined=no
-          if grep -q 'TS_RDP_PROBE\|TS_STATE=rdp_unreachable' "$f" && [ -n "$ip" ]; then joined=yes; fi
-          if [ -z "$state" ] && [ -n "$ip" ]; then joined=yes; fi
+          if [ -n "$ip" ] && ! grep -q 'TS_STATE=join_failed' "$f"; then joined=yes; fi
           desc="joined=$joined ip=${ip:-none} state=${state:-none} failure=${failure:-none} err=${err:-}"
           desc=$(printf '%s' "$desc" | cut -c1-140)
           st=failure
