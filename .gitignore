@@ -1,0 +1,26 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/
+.vscode/
+*.lock.local
+
+# Generated Android scaffolding (created by CI with `flutter create`)
+# android/ is intentionally NOT ignored when customised files are committed.
+android/local.properties
+android/.gradle/
+android/app/build/
+*.jks
+*.keystore
+key.properties
+
+# Build outputs and local secrets
+*.apk
+*.aab
+dist/
+.env
+.env.*

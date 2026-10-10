@@ -1,0 +1,208 @@
+# WinPilot - verify Windows 11 ARM64 runner (managed by the WinPilot app).
+#
+# Facts (see GitHub docs "GitHub-hosted runners"):
+# - windows-11-arm is a standard hosted runner (arm64) for PUBLIC repositories.
+#   Newer docs also list it for private repositories depending on your plan.
+#   If the job stays queued, check the repository visibility and plan.
+# - A successful run does NOT mean Remote Desktop is reachable. The
+#   "check RDP readiness" step verifies the listening port itself.
+# - Runner files and installed programs are NOT preserved after the job ends.
+# - Secrets are never printed. Markers "WINPILOT|KEY=VALUE" are parsed by the app.
+name: WinPilot - Verify Windows 11 ARM64
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_username:
+        description: 'Local Windows user prepared for RDP (used only when enable_rdp is true)'
+        required: false
+        default: 'winpilot'
+        type: string
+      enable_rdp:
+        description: 'Enable Remote Desktop server (requires the WINPILOT_WIN_PASSWORD secret)'
+        required: false
+        default: false
+        type: boolean
+      use_tailscale:
+        description: 'Connect the runner to Tailscale (requires the TS_AUTHKEY secret)'
+        required: false
+        default: true
+        type: boolean
+      session_minutes:
+        description: 'Maximum time the session stays open, in minutes (5-120)'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Windows 11 ARM64
+    runs-on: windows-11-arm
+    timeout-minutes: 150
+    env:
+      WIN_USER: ${{ inputs.windows_username }}
+      ENABLE_RDP: ${{ inputs.enable_rdp }}
+      USE_TAILSCALE: ${{ inputs.use_tailscale }}
+      SESSION_MINUTES: ${{ inputs.session_minutes }}
+    steps:
+      - name: 'WinPilot: verify OS and architecture'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID
+          Write-Output "WINPILOT|STAGE=diagnostics"
+          Write-Output "WINPILOT|OS=$($os.Caption)"
+          Write-Output "WINPILOT|OS_VERSION=$($os.Version)"
+          Write-Output "WINPILOT|OS_BUILD=$($os.BuildNumber)"
+          Write-Output "WINPILOT|ARCH=$arch"
+          Write-Output "WINPILOT|EDITION=$edition"
+          Write-Output "WINPILOT|RUNNER=$env:RUNNER_NAME"
+          Write-Output "WINPILOT|RUNNER_IMAGE=$env:ImageOS"
+          Write-Output "WINPILOT|RUN_ID=$env:GITHUB_RUN_ID"
+          if ($arch -ne 'Arm64') {
+            Write-Output "WINPILOT|ERROR=unexpected_architecture"
+            throw "Expected ARM64 but runner reports $arch"
+          }
+          Write-Output "WINPILOT|DIAGNOSTICS=ok"
+
+      - name: 'WinPilot: prepare Windows user'
+        if: ${{ inputs.enable_rdp }}
+        shell: pwsh
+        env:
+          WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Output "WINPILOT|STAGE=prepare_user"
+          if ($env:WIN_USER -notmatch '^[A-Za-z][A-Za-z0-9_-]{2,19}$') {
+            Write-Output "WINPILOT|ERROR=invalid_username"
+            throw "Invalid Windows username"
+          }
+          if ([string]::IsNullOrEmpty($env:WIN_PASSWORD)) {
+            Write-Output "WINPILOT|ERROR=missing_password_secret"
+            throw "Secret WINPILOT_WIN_PASSWORD is missing"
+          }
+          $pw = $env:WIN_PASSWORD
+          if ($pw.Length -lt 12 -or $pw -cnotmatch '[A-Z]' -or $pw -cnotmatch '[a-z]' -or $pw -notmatch '[0-9]' -or $pw -notmatch '[^A-Za-z0-9]') {
+            Write-Output "WINPILOT|ERROR=weak_password_secret"
+            throw "The password secret does not meet the policy (12+ chars, upper, lower, digit, symbol)"
+          }
+          $sec = ConvertTo-SecureString -String $pw -AsPlainText -Force
+          if (Get-LocalUser -Name $env:WIN_USER -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $env:WIN_USER -Password $sec
+          } else {
+            New-LocalUser -Name $env:WIN_USER -Password $sec -PasswordNeverExpires -AccountNeverExpires | Out-Null
+          }
+          $rdpGroup = (Get-LocalGroup -SID 'S-1-5-32-555').Name
+          Add-LocalGroupMember -Group $rdpGroup -Member $env:WIN_USER -ErrorAction SilentlyContinue
+          Write-Output "WINPILOT|RDP_USER=$env:WIN_USER"
+          Write-Output "WINPILOT|RDP_USER_READY=true"
+
+      - name: 'WinPilot: configure RDP'
+        if: ${{ inputs.enable_rdp }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Output "WINPILOT|STAGE=rdp"
+          $edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID
+          if ($edition -like 'Core*') {
+            Write-Output "WINPILOT|RDP_REASON=edition_unsupported"
+            Write-Output "WINPILOT|RDP_READY=false"
+            throw "This Windows edition ($edition) cannot host Remote Desktop"
+          }
+          $ts = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+          Set-ItemProperty -Path $ts -Name fDenyTSConnections -Value 0
+          Set-ItemProperty -Path "$ts\WinStations\RDP-Tcp" -Name UserAuthentication -Value 1
+          Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+          Set-Service -Name TermService -StartupType Manual
+          Start-Service -Name TermService
+          Write-Output "WINPILOT|RDP_CONFIGURED=true"
+
+      - name: 'WinPilot: connect Tailscale'
+        if: ${{ inputs.use_tailscale }}
+        shell: pwsh
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Output "WINPILOT|STAGE=tailscale"
+          if ([string]::IsNullOrEmpty($env:TS_AUTHKEY)) {
+            Write-Output "WINPILOT|TS_STATE=missing_secret"
+            exit 0
+          }
+          $exe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+          if (-not (Test-Path $exe)) {
+            winget install --id Tailscale.Tailscale -e --silent --accept-package-agreements --accept-source-agreements | Out-Host
+            $exe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+          }
+          if (-not (Test-Path $exe)) {
+            Write-Output "WINPILOT|TS_STATE=install_failed"
+            throw "Tailscale client could not be installed on this runner"
+          }
+          & $exe up --authkey $env:TS_AUTHKEY --unattended --hostname "winpilot-$env:GITHUB_RUN_ID" --accept-dns=false
+          $state = 'Unknown'
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $json = (& $exe status --json) | ConvertFrom-Json
+              $state = $json.BackendState
+            } catch { $state = 'Unknown' }
+            if ($state -eq 'Running') { break }
+            Start-Sleep -Seconds 4
+          }
+          Write-Output "WINPILOT|TS_STATE=$state"
+          if ($state -ne 'Running') {
+            throw "Tailscale did not reach the Running state (current: $state)"
+          }
+          $ip = (& $exe ip -4 | Select-Object -First 1)
+          Write-Output "WINPILOT|TS_IP=$ip"
+
+      - name: 'WinPilot: check RDP readiness'
+        if: ${{ inputs.enable_rdp }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Write-Output "WINPILOT|STAGE=rdp_check"
+          $svc = Get-Service -Name TermService -ErrorAction SilentlyContinue
+          $listening = $null -ne (Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue)
+          Write-Output "WINPILOT|RDP_SERVICE=$($svc.Status)"
+          Write-Output "WINPILOT|RDP_PORT_LISTENING=$listening"
+          if ($svc.Status -eq 'Running' -and $listening) {
+            Write-Output "WINPILOT|RDP_READY=true"
+          } else {
+            Write-Output "WINPILOT|RDP_READY=false"
+            Write-Output "WINPILOT|RDP_REASON=port_not_listening"
+            exit 1
+          }
+
+      - name: 'WinPilot: keep session open'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Output "WINPILOT|STAGE=session"
+          if ($env:ENABLE_RDP -ne 'true' -and $env:USE_TAILSCALE -ne 'true') {
+            Write-Output "WINPILOT|SESSION=verification_only"
+            exit 0
+          }
+          $minutes = [int]$env:SESSION_MINUTES
+          if ($minutes -lt 5) { $minutes = 5 }
+          if ($minutes -gt 120) { $minutes = 120 }
+          $end = (Get-Date).AddMinutes($minutes)
+          Write-Output "WINPILOT|SESSION_MINUTES=$minutes"
+          Write-Output "WINPILOT|SESSION_ENDS_AT=$($end.ToUniversalTime().ToString('o'))"
+          while ((Get-Date) -lt $end) {
+            Start-Sleep -Seconds 60
+            Write-Output "WINPILOT|HEARTBEAT=$((Get-Date).ToUniversalTime().ToString('o'))"
+          }
+          Write-Output "WINPILOT|SESSION=bounded_time_completed"
+
+      - name: 'WinPilot: summary'
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          Write-Output "WINPILOT|STAGE=done"
+          Write-Output "WINPILOT|FINISHED_AT=$((Get-Date).ToUniversalTime().ToString('o'))"
+          Write-Output "WINPILOT|NOTE=Runner files and installed programs are not kept after this job."
