@@ -12,22 +12,151 @@ concurrency:
   group: build-android-${{ github.ref }}
   cancel-in-progress: true
 
-# Release policy
-# - versionName comes from pubspec.yaml (x.y.z).
-# - versionCode is GITHUB_RUN_NUMBER: strictly increasing, so every build is newer.
-# - Every push builds a signed APK with the stable WinPilot release key (GitHub secrets).
-#   Pushes publish a normal (non-prerelease) GitHub Release tagged v<name>-build.<run>,
-#   which becomes "latest" and is what the in-app update check reads.
-# - Pull requests build and verify but never publish.
-# - The workflow refuses to build if the release keystore secrets are missing.
-#   It never falls back to a debug key.
+# Jobs
+# - test:            analyze, i18n check and unit tests. Needs no secrets. Runs first.
+# - debug-test-apk:  trial APK signed with the standard Android debug key. Needs no secrets.
+#                    Published as a PRE-RELEASE (never "latest"), so the in-app update check ignores it.
+#                    Not installable over a release-signed build; uninstall first.
+# - release-apk:     stable release-key APK. Runs ONLY when the release secrets exist; it is skipped
+#                    (not failed) otherwise. Publishes the normal "latest" GitHub Release used for updates.
+#
+# Release policy: versionName comes from pubspec.yaml; versionCode is GITHUB_RUN_NUMBER.
 
 jobs:
-  build:
-    name: Analyze, test and build signed release APK
+  test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Check i18n keys
+        run: python3 tool/check_i18n_keys.py
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test --reporter expanded
+
+  debug-test-apk:
+    name: Trial debug APK
+    needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # only the publish step on push events uses it
+      contents: write  # publish step only
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Compute version
+        run: |
+          VERSION_NAME=$(sed -n 's/^version: *\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' pubspec.yaml | head -1)
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Generate Android project scaffolding
+        run: |
+          rm -rf /tmp/wp_gen android
+          flutter create --platforms=android --org com.winpilot --project-name winpilot /tmp/wp_gen
+          cp -r /tmp/wp_gen/android ./android
+          python3 tool/ci/patch_android.py android
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build debug APK
+        run: |
+          flutter build apk --debug \
+            --build-name=$VERSION_NAME --build-number=$VERSION_CODE
+
+      - name: Verify and package
+        run: |
+          APK=build/app/outputs/flutter-apk/app-debug.apk
+          test -s "$APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/aapt" dump badging "$APK" > badging.txt
+          grep -q "name='com.winpilot.winpilot'" badging.txt
+          grep -q "versionCode='$VERSION_CODE'" badging.txt
+          grep -q "uses-permission: name='android.permission.INTERNET'" badging.txt
+          grep -q "application-label:'WinPilot'" badging.txt
+          mkdir -p dist
+          cp "$APK" dist/WinPilot-debug-test.apk
+          sha256sum dist/WinPilot-debug-test.apk > dist/WinPilot-debug-test.apk.sha256
+          cat dist/WinPilot-debug-test.apk.sha256
+          echo "APK_SHA256=$(cut -d' ' -f1 dist/WinPilot-debug-test.apk.sha256)" >> "$GITHUB_ENV"
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinPilot-debug-test-${{ env.VERSION_NAME }}-build-${{ github.run_number }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish debug pre-release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="debug-test-v${VERSION_NAME}-build.${GITHUB_RUN_NUMBER}"
+          NOTES="TRIAL DEBUG build of WinPilot ${VERSION_NAME} (build ${VERSION_CODE}) from commit ${GITHUB_SHA}. Signed with the standard Android debug key, not the stable release key. It may not install over an existing WinPilot; uninstall the old app first if Android refuses. SHA-256: ${APK_SHA256}"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "WinPilot ${VERSION_NAME} debug test (build ${VERSION_CODE})" --notes "$NOTES" \
+            dist/WinPilot-debug-test.apk dist/WinPilot-debug-test.apk.sha256
+
+  prepare-release:
+    name: Check release signing secrets
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      has_release_key: ${{ steps.check.outputs.has_release_key }}
+    steps:
+      - id: check
+        env:
+          KS_B64: ${{ secrets.WINPILOT_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.WINPILOT_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KEY_PASS" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "has_release_key=true" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are present."
+          else
+            echo "has_release_key=false" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are not set; the release job is skipped (the debug trial build still runs)."
+          fi
+
+  release-apk:
+    name: Build signed release APK
+    needs: [test, prepare-release]
+    if: needs.prepare-release.outputs.has_release_key == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # publish step only
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -53,7 +182,6 @@ jobs:
           fi
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
           echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "Version $VERSION_NAME (versionCode $GITHUB_RUN_NUMBER)"
 
       - name: Generate Android project scaffolding
         run: |
@@ -62,37 +190,8 @@ jobs:
           cp -r /tmp/wp_gen/android ./android
           tool/ci/run_logged.sh patch python3 tool/ci/patch_android.py android
 
-      - name: Check i18n keys
-        run: tool/ci/run_logged.sh i18n python3 tool/check_i18n_keys.py
-
       - name: Resolve dependencies
         run: tool/ci/run_logged.sh pub-get flutter pub get
-
-      - name: Analyze
-        run: tool/ci/run_logged.sh analyze flutter analyze --no-fatal-infos
-
-      - name: Test
-        run: tool/ci/run_logged.sh test flutter test --reporter expanded
-
-      - name: Check release signing secrets
-        env:
-          KS_B64: ${{ secrets.WINPILOT_KEYSTORE_B64 }}
-          KS_PASS: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
-          KEY_PASS: ${{ secrets.WINPILOT_KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
-        run: |
-          missing=0
-          for name in KS_B64 KS_PASS KEY_PASS KEY_ALIAS; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Release signing secret for $name is missing. Run tool/release/create_release_keystore.sh once (see README)."
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "Refusing to build an APK without the stable release key."
-            exit 1
-          fi
-          echo "Release signing secrets are present."
 
       - name: Decode release keystore
         env:
@@ -106,15 +205,12 @@ jobs:
       - name: Check keystore opens with the secrets
         env:
           KS_PASS: ${{ secrets.WINPILOT_KEYSTORE_PASSWORD }}
-          KEY_PASS: ${{ secrets.WINPILOT_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.WINPILOT_KEY_ALIAS }}
         run: |
-          # PKCS12 keystores use one password for store and key; the store password must open it.
           keytool -list -v -keystore "$WINPILOT_KEYSTORE_PATH" -storetype PKCS12 \
             -storepass "$KS_PASS" -alias "$KEY_ALIAS" > keystore-info.txt
           grep -E 'SHA256:' keystore-info.txt | head -1 | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f' > expected-cert-sha256.txt
           test -s expected-cert-sha256.txt
-          echo "Keystore alias $KEY_ALIAS opens. Expected certificate SHA-256 recorded."
 
       - name: Build signed release APK
         env:
@@ -131,8 +227,6 @@ jobs:
             --build-name=$VERSION_NAME --build-number=$VERSION_CODE "${DEFINES[@]}"
 
       - name: Verify APK package, version and signature
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK"
@@ -144,17 +238,12 @@ jobs:
           grep -q "uses-permission: name='android.permission.INTERNET'" badging.txt
           grep -q "application-label:'WinPilot'" badging.txt
           "$BT/apksigner" verify --min-sdk-version 23 --print-certs "$APK" > signer.txt
-          cat signer.txt
           ACTUAL=$(grep 'certificate SHA-256 digest' signer.txt | head -1 | sed 's/.*: *//' | tr -d ' ' | tr 'A-F' 'a-f')
           EXPECTED=$(cat expected-cert-sha256.txt)
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::APK is signed with a different key ($ACTUAL) than the release keystore ($EXPECTED)."
             exit 1
           fi
-          if grep -q 'CN=Android Debug' signer.txt; then
-            echo "::error::APK is signed with the Android debug key."; exit 1
-          fi
-          echo "Signature matches the stable release key."
           mkdir -p dist
           cp "$APK" dist/WinPilot-release.apk
           python3 tool/ci/make_update_manifest.py dist/WinPilot-release.apk "$VERSION_NAME" "$VERSION_CODE" dist/winpilot-update.json
@@ -165,7 +254,7 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/winpilot-release.p12"
 
-      - name: Upload APK artifact
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: WinPilot-release-apk-${{ env.VERSION_NAME }}-build-${{ github.run_number }}
@@ -179,17 +268,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${VERSION_NAME}-build.${GITHUB_RUN_NUMBER}"
-          NOTES=$(cat <<EOF
-          WinPilot ${VERSION_NAME} (versionCode ${VERSION_CODE}), built from commit ${GITHUB_SHA} on branch ${GITHUB_REF_NAME}.
-
-          Signed with the stable WinPilot release key. Android updates an installed WinPilot in place when this key matches.
-
-          SHA-256 of WinPilot-release.apk:
-          \`${APK_SHA256}\`
-
-          Verify the SHA-256 before installing. Update manifest: winpilot-update.json.
-          EOF
-          )
+          NOTES="WinPilot ${VERSION_NAME} (versionCode ${VERSION_CODE}) from commit ${GITHUB_SHA}. Signed with the stable WinPilot release key. SHA-256 of WinPilot-release.apk: ${APK_SHA256}"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "WinPilot ${VERSION_NAME} (build ${VERSION_CODE})" --notes "$NOTES" \
             dist/WinPilot-release.apk dist/WinPilot-release.apk.sha256 dist/winpilot-update.json
