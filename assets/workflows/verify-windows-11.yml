@@ -1,5 +1,5 @@
 # WinPilot - Windows 11 Pro virtual machine session (managed by the WinPilot app).
-# winpilot-workflow-revision: 2
+# winpilot-workflow-revision: 3
 #
 # How it works
 # - Runs Windows 11 Pro (x64) inside Docker with KVM, using the open-source dockur/windows
@@ -133,7 +133,7 @@ jobs:
               echo "WINPILOT|TS_STATE=requires_rdp"
               echo "::error::Tailscale needs RDP enabled: the address is only reported after TCP 3389 answers."; exit 1
             fi
-            echo "::add-mask::$TS_AUTHKEY"
+            # (secrets read through env are masked by the runner; the value is never echoed)
             echo "WINPILOT|TS_SECRET=present"
           else
             echo "WINPILOT|TS_SECRET=absent"
@@ -420,14 +420,56 @@ jobs:
           if [ -z "$TS_AUTHKEY" ]; then
             echo "WINPILOT|TS_STATE=missing_secret"; echo "::error::TS_AUTHKEY is missing."; exit 1
           fi
-          echo "::add-mask::$TS_AUTHKEY"
+          # (secrets read through env are masked by the runner; the value is never echoed)
+          cat > "$SCRATCH/ts_classify.py" <<'PY'
+          import os, re, sys
+          # Turns the raw `tailscale up` output into a category plus the first error line.
+          # The auth key is removed from the text before anything is printed.
+          text = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+          key = os.environ.get('TS_AUTHKEY', '')
+          def redact(t):
+              if key:
+                  t = t.replace(key, 'tskey-***')
+              return re.sub(r'tskey-[A-Za-z0-9_-]+', 'tskey-***', t)
+          lines = [redact(l.strip()) for l in text.splitlines() if l.strip()]
+          err = next((l for l in lines if re.search(r'error|fail|invalid|expired|revoked|not defined|timed? ?out|denied|refused', l, re.I)), lines[-1] if lines else '')
+          low = ' '.join(lines).lower()
+          if 'flag provided but not defined' in low or 'unknown flag' in low or 'usage: tailscale up' in low:
+              cat = 'invalid_cli_flags'
+          elif 'failed to connect to local tailscaled' in low or 'is tailscaled running' in low or 'tailscaled' in low and 'not running' in low:
+              cat = 'daemon_not_running'
+          elif 'expired' in low:
+              cat = 'expired_key'
+          elif 'revoked' in low or 'already used' in low or 'deleted' in low:
+              cat = 'revoked_or_used_key'
+          elif 'invalid' in low and ('key' in low or 'authkey' in low):
+              cat = 'invalid_key'
+          elif 'timed out' in low or 'timeout' in low:
+              cat = 'join_timeout'
+          elif re.search(r'no such host|connection refused|network is unreachable|i/o timeout|dial tcp|tls|eof|control server', low):
+              cat = 'network_or_control_plane'
+          else:
+              cat = 'unknown'
+          print('WINPILOT|TS_FAILURE=' + cat)
+          print('WINPILOT|TS_ERROR=' + err[:300])
+          PY
           curl -fsSL https://tailscale.com/install.sh | sudo sh >/dev/null
+          echo "WINPILOT|TS_VERSION=$(tailscale version 2>/dev/null | head -1 || echo unknown)"
           umask 077
-          if ! sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="winpilot-$GITHUB_RUN_ID" \
-               --ephemeral --accept-dns=false --timeout=90s >"$SCRATCH/ts-up.log" 2>&1; then
+          # The key goes to a 0600 file and is passed with --auth-key=file:, never on the command line.
+          keyfile="$SCRATCH/ts-authkey"
+          printf '%s' "$TS_AUTHKEY" > "$keyfile"
+          # Only flags that exist in `tailscale up` (cmd/tailscale/cli/up.go). Ephemeral is a property of
+          # the auth key, set when the key is created in the Tailscale admin console; it is not a flag.
+          up_rc=0
+          sudo tailscale up --auth-key="file:$keyfile" --hostname="winpilot-$GITHUB_RUN_ID" \
+               --accept-dns=false --timeout=90s >"$SCRATCH/ts-up.log" 2>&1 || up_rc=$?
+          rm -f "$keyfile"
+          if [ "$up_rc" -ne 0 ]; then
             echo "WINPILOT|TS_STATE=join_failed"
-            echo "::error::Tailscale could not join the tailnet. Check that the auth key is valid, not expired and not revoked."
-            sed 's/tskey-[A-Za-z0-9_-]*/tskey-***/g' "$SCRATCH/ts-up.log" | tail -n 3 || true
+            echo "WINPILOT|TS_UP_EXIT=$up_rc"
+            python3 "$SCRATCH/ts_classify.py" "$SCRATCH/ts-up.log" || true
+            echo "::error::Tailscale did not join the tailnet. See WINPILOT|TS_FAILURE and TS_ERROR in the step log for the real cause."
             exit 1
           fi
           ip=$(tailscale ip -4 | head -1 || true)

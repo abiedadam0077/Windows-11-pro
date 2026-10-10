@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/i18n/app_strings.dart';
+import '../../core/security/redactor.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/runner_diagnostics.dart';
 import '../../state/session_state.dart';
@@ -49,7 +50,7 @@ class TailscalePage extends ConsumerWidget {
         ),
       TailscaleStatus.joinFailed => (
           s.t('ts_status_join_failed'),
-          s.t('ts_join_failed_desc'),
+          _joinFailedBody(s, diag),
           AppColors.danger,
           Icons.link_off_rounded,
         ),
@@ -159,4 +160,24 @@ class TailscalePage extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Explains a failed join from the runner's own classification, then shows the redacted original error.
+/// Only a category we actually observed is named; anything else says so and shows the raw line.
+String _joinFailedBody(AppStrings s, RunnerDiagnostics diag) {
+  final key = switch (diag.tailscaleFailure) {
+    'invalid_cli_flags' => 'ts_fail_invalid_cli_flags',
+    'expired_key' => 'ts_fail_expired_key',
+    'revoked_or_used_key' => 'ts_fail_revoked_or_used_key',
+    'invalid_key' => 'ts_fail_invalid_key',
+    'daemon_not_running' => 'ts_fail_daemon',
+    'network_or_control_plane' => 'ts_fail_network',
+    'join_timeout' => 'ts_fail_timeout',
+    _ => 'ts_fail_unknown',
+  };
+  final err = diag.tailscaleError;
+  final detail = (err == null || err.isEmpty)
+      ? ''
+      : '\n\n${s.t('ts_error_label')}: ${SecretRedactor.redact(err)}';
+  return '${s.t(key)}$detail';
 }

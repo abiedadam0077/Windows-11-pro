@@ -31,6 +31,8 @@ class RunnerDiagnostics {
     this.tailscaleState,
     this.tailscaleIp,
     this.tailscaleRdpProbe,
+    this.tailscaleFailure,
+    this.tailscaleError,
     this.stage,
     this.sessionEndsAt,
     this.sessionMinutes,
@@ -56,6 +58,12 @@ class RunnerDiagnostics {
   final String? tailscaleIp;
   /// 'ok' only when the workflow reached TCP 3389 on the tailnet IP itself.
   final String? tailscaleRdpProbe;
+  /// Category from the runner's own classification of `tailscale up` output
+  /// (invalid_cli_flags, expired_key, revoked_or_used_key, invalid_key, daemon_not_running,
+  /// network_or_control_plane, join_timeout, unknown). Never the key itself.
+  final String? tailscaleFailure;
+  /// First error line from `tailscale up`, with the auth key removed by the runner.
+  final String? tailscaleError;
   final String? stage;
   final DateTime? sessionEndsAt;
   final int? sessionMinutes;
@@ -130,6 +138,8 @@ class RunnerDiagnostics {
       tailscaleState: values['TS_STATE'],
       tailscaleIp: values['TS_IP'],
       tailscaleRdpProbe: values['TS_RDP_PROBE'],
+      tailscaleFailure: values['TS_FAILURE'],
+      tailscaleError: values['TS_ERROR'],
       stage: values['STAGE'],
       sessionEndsAt: time('SESSION_ENDS_AT'),
       sessionMinutes: int.tryParse(values['SESSION_MINUTES'] ?? ''),

@@ -81,7 +81,7 @@ void main() {
     });
 
     test('the template carries the revision marker the app uses to detect outdated copies', () {
-      expect(text, contains('winpilot-workflow-revision: 2'));
+      expect(text, contains('winpilot-workflow-revision: 3'));
     });
 
     test('Tailscale is opt-in by default', () {

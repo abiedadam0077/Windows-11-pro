@@ -45,6 +45,15 @@ class _AppStringsDelegate extends LocalizationsDelegate<AppStrings> {
 }
 
 const Map<String, String> _en = {
+  'ts_fail_invalid_cli_flags': 'The runner called Tailscale with a flag this Tailscale version does not accept. This is a WinPilot workflow bug, not your key. Update the workflow.',
+  'ts_fail_expired_key': 'Tailscale reports that this auth key has expired. Create a new key in the Tailscale admin console and save it as TS_AUTHKEY.',
+  'ts_fail_revoked_or_used_key': 'Tailscale reports that this key was revoked, deleted, or already used. One-off keys work only once. Use a reusable key with Ephemeral enabled.',
+  'ts_fail_invalid_key': 'Tailscale did not accept this key. Check that it was copied completely and that it comes from the tailnet you expect.',
+  'ts_fail_daemon': 'The Tailscale daemon did not run on the runner. This is a runner problem, not your key. Start a new session.',
+  'ts_fail_network': 'The runner could not reach the Tailscale control server. This is a network problem, not necessarily your key. Retry the session.',
+  'ts_fail_timeout': 'Tailscale did not reach the Running state within 90 seconds. Retry. If it repeats, check the Tailscale status page.',
+  'ts_fail_unknown': 'Tailscale failed with an error WinPilot does not recognise. The original message is shown below.',
+  'ts_error_label': 'Original error (key removed)',
   'setup_outdated_workflow': 'The installed workflow is an older version. Update it before starting a session.',
   'setup_workflow_outdated': 'Workflow at {path} is an older version and must be updated.',
   'setup_workflow_update': 'Update workflow',
@@ -743,6 +752,15 @@ const Map<String, String> _en = {
 };
 
 const Map<String, String> _ar = {
+  'ts_fail_invalid_cli_flags': 'استدعى الـ runner أمر Tailscale بخيار لا تقبله نسخة Tailscale المثبتة. هذا خطأ في ملف التشغيل وليس في مفتاحك. حدّث ملف التشغيل.',
+  'ts_fail_expired_key': 'يخبرنا Tailscale أن مفتاح المصادقة هذا منتهي. أنشئ مفتاحاً جديداً من لوحة Tailscale واحفظه باسم TS_AUTHKEY.',
+  'ts_fail_revoked_or_used_key': 'يخبرنا Tailscale أن هذا المفتاح أُلغي أو حُذف أو استُعمل. مفاتيح الاستعمال الواحد تعمل مرة واحدة فقط. استعمل مفتاحاً قابلاً لإعادة الاستعمال مع تفعيل Ephemeral.',
+  'ts_fail_invalid_key': 'لم يقبل Tailscale هذا المفتاح. تأكد من نسخه كاملاً ومن أنه يخص الشبكة (tailnet) المطلوبة.',
+  'ts_fail_daemon': 'لم يعمل خدمة Tailscale على الـ runner. المشكلة في الـ runner وليست في مفتاحك. ابدأ جلسة جديدة.',
+  'ts_fail_network': 'لم يستطع الـ runner الوصول إلى خادم تحكم Tailscale. المشكلة شبكية وليست بالضرورة في المفتاح. أعد المحاولة.',
+  'ts_fail_timeout': 'لم يصل Tailscale إلى حالة Running خلال 90 ثانية. أعد المحاولة. إن تكرر الأمر تحقق من صفحة حالة Tailscale.',
+  'ts_fail_unknown': 'فشل Tailscale بخطأ لا يتعرف عليه WinPilot. الرسالة الأصلية معروضة أدناه.',
+  'ts_error_label': 'الخطأ الأصلي (بعد إخفاء المفتاح)',
   'setup_outdated_workflow': 'ملف التشغيل المثبّت نسخة قديمة. حدّثه قبل بدء أي جلسة.',
   'setup_workflow_outdated': 'ملف التشغيل في {path} نسخة قديمة ويجب تحديثه.',
   'setup_workflow_update': 'تحديث ملف التشغيل',
