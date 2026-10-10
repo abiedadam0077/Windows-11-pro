@@ -1,0 +1,328 @@
+name: Windows 11 Pro
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Windows 11 Pro (dockur/windows) on a GitHub Actions runner.
+#  - Start it manually from the "Actions" tab → "Windows 11 Pro" → "Run workflow".
+#  - It runs for up to ~5 hours, then shuts Windows down cleanly and saves
+#    the WHOLE disk (files, wallpaper, apps, settings…) as an ENCRYPTED backup
+#    in this repo's Releases.
+#  - Next time you start it, the latest backup is restored → Windows is
+#    exactly as you left it.
+#
+#  Required repository secrets (Settings → Secrets and variables → Actions):
+#    BACKUP_PASSWORD   password used to encrypt/decrypt the disk backup
+#                      (NEVER lose it – without it the backup is unreadable)
+#    ACCESS_PASSWORD   password for the web viewer login AND the Windows user
+#  Optional:
+#    TAILSCALE_AUTHKEY Tailscale auth key → lets you connect with RDP
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Session length in hours (max ~5)"
+        required: false
+        default: "5"
+      fresh_install:
+        description: "DANGER: ignore saved backup and install a NEW clean Windows"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write # needed to store the backup in Releases
+
+concurrency:
+  group: windows11-vm # never run two copies at once (they'd overwrite each other's backup)
+  cancel-in-progress: false
+
+env:
+  # ── Windows settings (only applied on the FIRST install) ──
+  WIN_VERSION: "11" # "11" = Windows 11 Pro
+  WIN_USER: "Docker" # Windows user name
+  LANGUAGE: "English"
+  REGION: "en-US"
+  KEYBOARD: "en-US"
+  # ── Virtual machine resources ──
+  RAM_SIZE: "12G" # public-repo runner has 16 GB
+  CPU_CORES: "4" # public-repo runner has 4 cores
+  DISK_SIZE: "64G" # virtual disk size (sparse; only used space is saved)
+  # ── Backup settings ──
+  BACKUP_PREFIX: "win11-backup"
+  CHUNK_SIZE: "1900M" # GitHub release assets must be < 2 GB each
+  KEEP_BACKUPS: "2" # keep the newest N backups (older ones are deleted)
+  # ── Timing ──
+  JOB_LIMIT_MIN: "355" # GitHub hard limit is 360 minutes
+  SAVE_RESERVE_MIN: "50" # minutes reserved at the end for shutdown + backup upload
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    env:
+      TS_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check secrets
+        env:
+          BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
+        run: |
+          ok=1
+          if [ -z "$BACKUP_PASSWORD" ]; then echo "::error::Secret BACKUP_PASSWORD is missing"; ok=0; fi
+          if [ -z "$ACCESS_PASSWORD" ]; then echo "::error::Secret ACCESS_PASSWORD is missing"; ok=0; fi
+          [ "$ok" = 1 ] || exit 1
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is not available on this runner"; exit 1
+          fi
+          ls -l /dev/kvm
+
+      - name: Free disk space & choose storage location
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift \
+                      /usr/local/lib/node_modules /opt/microsoft /opt/google /usr/lib/jvm || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile || true
+
+          free_kb() { df --output=avail -k "$1" 2>/dev/null | tail -1 | tr -d ' '; }
+          ROOT_FREE=$(free_kb /)
+          MNT_FREE=0
+          if mountpoint -q /mnt; then MNT_FREE=$(free_kb /mnt); fi
+          if [ "${MNT_FREE:-0}" -gt "$ROOT_FREE" ]; then BASE=/mnt; else BASE=/; fi
+          STORAGE="${BASE%/}/win-storage"
+          WORK="/win-work"
+          sudo mkdir -p "$STORAGE" "$WORK"
+          sudo chown "$USER" "$WORK"
+          echo "STORAGE=$STORAGE" >> "$GITHUB_ENV"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt 2>/dev/null || df -h /
+          echo "Windows storage -> $STORAGE"
+
+      - name: Pull images
+        run: |
+          command -v zstd >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq zstd; }
+          docker pull -q dockurr/windows:latest
+          docker pull -q caddy:2
+          docker pull -q cloudflare/cloudflared:latest
+
+      - name: Restore saved Windows
+        id: restore
+        env:
+          BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+          FRESH: ${{ inputs.fresh_install }}
+        run: |
+          set -euo pipefail
+          if [ "$FRESH" = "true" ]; then
+            echo "Fresh install requested → skipping restore."
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Newest release with our prefix that has the COMPLETE marker (i.e. upload finished).
+          TAG=""
+          for t in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+                      --jq "[.[] | select(.tagName | startswith(\"${BACKUP_PREFIX}-\"))] | sort_by(.createdAt) | reverse | .[].tagName"); do
+            if gh release view "$t" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx COMPLETE; then
+              TAG="$t"; break
+            fi
+          done
+
+          if [ -z "$TAG" ]; then
+            echo "No backup found → Windows will be installed from scratch (takes ~20-40 min the first time)."
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Restoring backup: $TAG"
+          PARTS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep '\.part[0-9]*$' | sort)
+          DL="$WORK/dl"; mkdir -p "$DL"
+
+          # Stream parts one by one: download → output → delete (only one chunk on disk at a time)
+          for p in $PARTS; do
+            for i in 1 2 3 4 5; do
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "$p" -D "$DL" --clobber && break
+              echo "retry $i for $p" >&2; sleep 10
+            done
+            cat "$DL/$p"; rm -f "$DL/$p"
+          done \
+            | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSWORD \
+            | zstd -d -T0 \
+            | sudo tar -xS -C "$STORAGE"
+
+          sudo ls -lsh "$STORAGE"
+          echo "restored=true" >> "$GITHUB_OUTPUT"
+
+      - name: Start Windows
+        env:
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
+        run: |
+          docker network create winnet
+          docker run -d --name windows --network winnet \
+            -p 3389:3389/tcp -p 3389:3389/udp \
+            -e VERSION="$WIN_VERSION" \
+            -e USERNAME="$WIN_USER" -e PASSWORD="$ACCESS_PASSWORD" \
+            -e LANGUAGE="$LANGUAGE" -e REGION="$REGION" -e KEYBOARD="$KEYBOARD" \
+            -e RAM_SIZE="$RAM_SIZE" -e CPU_CORES="$CPU_CORES" -e DISK_SIZE="$DISK_SIZE" \
+            --device /dev/kvm --device /dev/net/tun --cap-add NET_ADMIN \
+            -v "$STORAGE:/storage" \
+            --stop-timeout 180 \
+            dockurr/windows:latest
+          sleep 15
+          docker logs --tail 30 windows
+
+      - name: Start web access (password-protected)
+        env:
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
+        run: |
+          HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext "$ACCESS_PASSWORD")
+          cat > "$WORK/Caddyfile" <<'EOF'
+          :8080 {
+            basic_auth {
+              {$WEB_USER} {$WEB_HASH}
+            }
+            reverse_proxy windows:8006
+          }
+          EOF
+          docker run -d --name caddy --network winnet \
+            -e WEB_USER="$WIN_USER" -e WEB_HASH="$HASH" \
+            -v "$WORK/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2
+
+          docker run -d --name tunnel --network winnet cloudflare/cloudflared:latest \
+            tunnel --no-autoupdate --url http://caddy:8080
+
+          URL=""
+          for i in $(seq 1 60); do
+            URL=$(docker logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | head -1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          echo "WEB_URL=$URL" >> "$GITHUB_ENV"
+          echo "=============================================================="
+          echo " Windows web viewer : $URL"
+          echo " Login user         : $WIN_USER"
+          echo " Login password     : (your ACCESS_PASSWORD secret)"
+          echo "=============================================================="
+
+      - name: Connect Tailscale (optional, for RDP)
+        if: ${{ env.TS_KEY != '' }}
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey "$TS_KEY" --hostname "win11-github" --accept-routes=false
+          echo "TS_IP=$(tailscale ip -4)" >> "$GITHUB_ENV"
+          echo "=============================================================="
+          echo " RDP (Remote Desktop) via Tailscale"
+          echo " PC name / address : $(tailscale ip -4)   (or: win11-github)"
+          echo " User              : $WIN_USER"
+          echo " Password          : (your ACCESS_PASSWORD secret)"
+          echo "=============================================================="
+
+      - name: Windows is running (open the link below)
+        env:
+          HOURS: ${{ inputs.hours }}
+        run: |
+          HOURS="${HOURS:-5}"
+          WANT_SEC=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600}')
+          NOW=$(date +%s)
+          HARD_END=$(( JOB_START + (JOB_LIMIT_MIN - SAVE_RESERVE_MIN) * 60 ))
+          END=$(( NOW + WANT_SEC ))
+          [ "$END" -gt "$HARD_END" ] && END=$HARD_END
+          echo "Session ends at: $(date -u -d @"$END" '+%H:%M UTC')"
+          echo "Tip: to stop early AND save, just shut Windows down from the Start menu."
+
+          last_print=0
+          while true; do
+            NOW=$(date +%s)
+            if [ "$(docker inspect -f '{{.State.Running}}' windows 2>/dev/null)" != "true" ]; then
+              echo "Windows was shut down → saving."
+              break
+            fi
+            if [ "$NOW" -ge "$END" ]; then
+              echo "Time is up → shutting Windows down and saving."
+              break
+            fi
+            if [ $(( NOW - last_print )) -ge 600 ]; then
+              LEFT=$(( (END - NOW) / 60 ))
+              echo "[$(date -u '+%H:%M')] Running – ${LEFT} min left | Web: ${WEB_URL} ${TS_IP:+| RDP: ${TS_IP}:3389}"
+              last_print=$NOW
+            fi
+            sleep 20
+          done
+
+      - name: Shut down Windows cleanly
+        if: ${{ always() && steps.restore.outcome == 'success' }}
+        run: |
+          if [ "$(docker inspect -f '{{.State.Running}}' windows 2>/dev/null)" = "true" ]; then
+            echo "Sending shutdown signal to Windows (up to 3 min)…"
+            docker stop -t 180 windows || true
+          fi
+          docker logs --tail 20 windows 2>&1 || true
+          docker rm -f tunnel caddy >/dev/null 2>&1 || true
+          # Remove this machine from Tailscale so the name "win11-github" is free next time
+          if command -v tailscale >/dev/null; then sudo tailscale logout || true; fi
+
+      - name: Save Windows (encrypted backup → Releases)
+        if: ${{ always() && steps.restore.outcome == 'success' }}
+        env:
+          BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Never save a half-finished first install (would break the next start)
+          if ! sudo sh -c "ls \"$STORAGE\"/*.boot >/dev/null 2>&1"; then
+            echo "::warning::Windows installation not finished yet → nothing saved. Next run will continue/restart the install."
+            exit 0
+          fi
+
+          NEW_TAG="${BACKUP_PREFIX}-$(date -u +%Y%m%d-%H%M%S)"
+          export NEW_TAG GITHUB_REPOSITORY
+          gh release create "$NEW_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Windows backup $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --notes "Encrypted Windows 11 disk backup (run ${GITHUB_RUN_ID}). Do not edit." \
+            --prerelease
+
+          cat > "$WORK/upload-part.sh" <<'EOF'
+          #!/bin/bash
+          set -e
+          cat > "$FILE"
+          for i in 1 2 3 4 5 6; do
+            if gh release upload "$NEW_TAG" "$FILE" --repo "$GITHUB_REPOSITORY" --clobber; then
+              echo "uploaded $(basename "$FILE") ($(du -h "$FILE" | cut -f1))" >&2
+              rm -f "$FILE"; exit 0
+            fi
+            echo "upload retry $i" >&2; sleep 15
+          done
+          exit 1
+          EOF
+          chmod +x "$WORK/upload-part.sh"
+
+          cd "$STORAGE"
+          sudo tar -cS --exclude='*.iso' -f - . \
+            | zstd -T0 -3 \
+            | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -pass env:BACKUP_PASSWORD \
+            | split -b "$CHUNK_SIZE" -d -a 3 --filter="$WORK/upload-part.sh" - "$WORK/disk.tar.zst.enc.part"
+
+          # Mark the backup as complete (restore only uses complete backups)
+          date -u > "$WORK/COMPLETE"
+          gh release upload "$NEW_TAG" "$WORK/COMPLETE" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Backup saved: $NEW_TAG"
+
+          # Delete older backups, keep the newest $KEEP_BACKUPS
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+            --jq "[.[] | select(.tagName | startswith(\"${BACKUP_PREFIX}-\"))] | sort_by(.createdAt) | reverse | .[${KEEP_BACKUPS}:] | .[].tagName" \
+          | while read -r old; do
+              [ -n "$old" ] || continue
+              echo "Deleting old backup $old"
+              gh release delete "$old" --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+            done
