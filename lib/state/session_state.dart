@@ -153,6 +153,27 @@ class SessionController extends Notifier<SessionState> {
     );
   }
 
+  /// Graceful stop: the workflow shuts Windows down, saves and uploads the backup.
+  Future<void> requestStop() async {
+    final active = state.active;
+    if (active == null || active.phase.isTerminal) return;
+    state = state.copyWith(busy: true);
+    try {
+      await ref.read(githubRepositoryProvider).requestStop(
+            owner: active.owner,
+            repo: active.repoName,
+            runId: active.runId,
+          );
+      _log('activity_stop_requested', ActivityKind.warning);
+      await refresh(silent: true);
+    } on AppFailure catch (e) {
+      state = state.copyWith(failure: e);
+    } finally {
+      state = state.copyWith(busy: false);
+    }
+  }
+
+  /// Hard cancel: GitHub stops the run at once. The workflow's backup step does NOT run.
   Future<void> cancelActive() async {
     final active = state.active;
     if (active == null || active.phase.isTerminal) return;

@@ -289,6 +289,18 @@ class GitHubApi {
     );
   }
 
+  /// Creates or updates a repository Actions variable (plain text, not a secret).
+  Future<void> upsertActionsVariable(String owner, String repo, String name, String value) async {
+    try {
+      await _send('POST', '/repos/$owner/$repo/actions/variables',
+          data: {'name': name, 'value': value});
+    } on AppFailure catch (e) {
+      if (e.kind != FailureKind.conflict && e.kind != FailureKind.validation) rethrow;
+      await _send('PATCH', '/repos/$owner/$repo/actions/variables/$name',
+          data: {'name': name, 'value': value});
+    }
+  }
+
   // ---------------------------------------------------------------- workflows
 
   Future<void> dispatchWorkflow({

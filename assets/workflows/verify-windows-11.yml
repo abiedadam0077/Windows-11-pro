@@ -366,13 +366,30 @@ jobs:
           echo "WINPILOT|STAGE=windows_boot"
           deadline=$(( $(date +%s) + 200 * 60 ))
           rdp_ready=false
+          cat > "$SCRATCH/rdp_probe.py" <<'PY'
+          import socket, sys
+          # X.224 connection request with an RDP negotiation request (TLS + CredSSP).
+          # A real RDP server answers with an X.224 Connection Confirm (TPKT 03 00, code 0xD0).
+          # A port that only accepts TCP (Docker proxy before Windows boots) closes the socket.
+          req = bytes.fromhex('030000130ee000000000000100080003000000')
+          host = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
+          try:
+              s = socket.create_connection((host, 3389), timeout=8)
+              s.sendall(req)
+              data = s.recv(64)
+              s.close()
+          except OSError:
+              sys.exit(1)
+          ok = len(data) >= 6 and data[:2] == b'\x03\x00' and (data[5] & 0xF0) == 0xD0
+          sys.exit(0 if ok else 1)
+          PY
           while [ "$(date +%s)" -lt "$deadline" ]; do
             if ! docker ps -q --filter "name=$VM_NAME" | grep -q .; then
               echo "WINPILOT|ERROR=vm_stopped_before_ready"
               docker logs --tail 60 "$VM_NAME" 2>&1 | python3 -c 'import sys,os; s=sys.stdin.read(); p=os.environ.get("WINPILOT_WIN_PASSWORD",""); print(s.replace(p,"***") if p else s)' || true
               exit 1
             fi
-            if [ "$ENABLE_RDP" != "true" ] || timeout 2 bash -c '</dev/tcp/127.0.0.1/3389' 2>/dev/null; then
+            if [ "$ENABLE_RDP" != "true" ] || python3 "$SCRATCH/rdp_probe.py" 127.0.0.1 2>/dev/null; then
               rdp_ready=true; break
             fi
             sleep 20
@@ -386,7 +403,8 @@ jobs:
           # The image is Windows 11 Pro x64 (dockur VERSION=11). This marks the configured image,
           # not a value read from inside Windows.
           echo "WINPILOT|ARCH=x64"
-          echo "WINPILOT|RDP_PORT_OPEN=true"
+          echo "WINPILOT|RDP_PORT_OPEN=$rdp_ready"
+          echo "WINPILOT|RDP_HANDSHAKE=$rdp_ready"
           echo "WINPILOT|WINDOWS_READY=true"
           echo "WINPILOT|RDP_READY=$ENABLE_RDP"
           echo "WINPILOT|READY_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -418,8 +436,25 @@ jobs:
           # Prove RDP answers on the tailnet address itself. Docker publishes 3389 on the runner,
           # so this is the path a client on the tailnet uses.
           ok=false
+          cat > "$SCRATCH/rdp_probe.py" <<'PY'
+          import socket, sys
+          # X.224 connection request with an RDP negotiation request (TLS + CredSSP).
+          # A real RDP server answers with an X.224 Connection Confirm (TPKT 03 00, code 0xD0).
+          # A port that only accepts TCP (Docker proxy before Windows boots) closes the socket.
+          req = bytes.fromhex('030000130ee000000000000100080003000000')
+          host = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
+          try:
+              s = socket.create_connection((host, 3389), timeout=8)
+              s.sendall(req)
+              data = s.recv(64)
+              s.close()
+          except OSError:
+              sys.exit(1)
+          ok = len(data) >= 6 and data[:2] == b'\x03\x00' and (data[5] & 0xF0) == 0xD0
+          sys.exit(0 if ok else 1)
+          PY
           for _ in $(seq 1 6); do
-            if timeout 5 bash -c "</dev/tcp/$ip/3389" 2>/dev/null; then ok=true; break; fi
+            if python3 "$SCRATCH/rdp_probe.py" "$ip" 2>/dev/null; then ok=true; break; fi
             sleep 10
           done
           if [ "$ok" != true ]; then
@@ -441,6 +476,10 @@ jobs:
             if ! docker ps -q --filter "name=$VM_NAME" | grep -q .; then
               echo "WINPILOT|SESSION_END=vm_stopped"; exit 0
             fi
+            stop_req=$(gh api "repos/$GITHUB_REPOSITORY/actions/variables/WINPILOT_STOP_RUN" -q .value 2>/dev/null || true)
+            if [ "$stop_req" = "$GITHUB_RUN_ID" ]; then
+              echo "WINPILOT|SESSION_END=stop_requested"; exit 0
+            fi
             echo "WINPILOT|REMAINING_SECONDS=$(( end - $(date +%s) ))"
             sleep 30
           done
@@ -455,6 +494,13 @@ jobs:
           echo "WINPILOT|STAGE=shutdown"
           if docker ps -q --filter "name=$VM_NAME" | grep -q .; then
             docker stop -t 110 "$VM_NAME" >/dev/null || true
+          fi
+          vm_code=$(docker inspect -f '{{.State.ExitCode}}' "$VM_NAME" 2>/dev/null || echo unknown)
+          echo "WINPILOT|VM_EXIT_CODE=$vm_code"
+          if [ -f "$SCRATCH/ready.flag" ] && [ "$vm_code" = "137" ]; then
+            echo "WINPILOT|BACKUP=skipped_unclean_shutdown"
+            echo "::error::Windows did not shut down within 110 seconds and was killed. This disk is not saved; the previous backups are unchanged."
+            exit 1
           fi
           if [ ! -f "$SCRATCH/ready.flag" ]; then
             echo "WINPILOT|BACKUP=skipped_not_ready"
@@ -553,5 +599,6 @@ jobs:
           sudo nginx -c "$SCRATCH/nginx.conf" -s quit >/dev/null 2>&1 || true
           if [ "$USE_TAILSCALE" = "true" ]; then sudo tailscale logout >/dev/null 2>&1 || true; fi
           docker rm -f "$VM_NAME" >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/variables/WINPILOT_STOP_RUN" >/dev/null 2>&1 || true
           rm -f "$SCRATCH/htpasswd" "$SCRATCH/auth.hdr" "$SCRATCH/cloudflared.log" || true
           echo "WINPILOT|STAGE=done"

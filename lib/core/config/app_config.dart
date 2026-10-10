@@ -30,6 +30,8 @@ abstract final class AppConfig {
   static const backupPasswordSecret = 'BACKUP_PASSWORD';
   static const windowsPasswordSecret = 'WINPILOT_WIN_PASSWORD';
   static const tailscaleAuthKeySecret = 'TS_AUTHKEY';
+  /// Repository variable the app sets to a run id to ask that session to stop and save its backup.
+  static const stopVariable = 'WINPILOT_STOP_RUN';
 
   // Session limits (bounded, documented to the user).
   static const defaultSessionMinutes = 30;

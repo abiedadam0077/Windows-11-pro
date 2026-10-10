@@ -57,6 +57,29 @@ void main() {
       expect(text, isNot(contains('TS_AUTHKEY is not set. Tailscale is not connected.')));
     });
 
+    test('RDP readiness uses an RDP handshake, not a bare TCP accept', () {
+      // Docker publishes 3389 before Windows boots, so a TCP connect alone proves nothing.
+      expect(text, contains('rdp_probe.py'));
+      expect(text, contains('030000130ee000000000000100080003000000'));
+      expect(text, isNot(contains("</dev/tcp/127.0.0.1/3389")));
+      expect(text, isNot(contains(r'timeout 5 bash -c "</dev/tcp/$ip/3389"')));
+    });
+
+    test('a stop request ends the session loop so the backup step runs', () {
+      expect(text, contains('actions/variables/WINPILOT_STOP_RUN'));
+      expect(text, contains('SESSION_END=stop_requested'));
+      expect(text, contains('actions: read'));
+    });
+
+    test('a killed VM (exit 137) is never backed up as clean', () {
+      expect(text, contains('BACKUP=skipped_unclean_shutdown'));
+      expect(text, contains(r'"$vm_code" = "137"'));
+    });
+
+    test('cleanup removes the stop request variable', () {
+      expect(text, contains(r'-X DELETE "repos/$GITHUB_REPOSITORY/actions/variables/WINPILOT_STOP_RUN"'));
+    });
+
     test('Tailscale is opt-in by default', () {
       expect(text, contains("default: false\n        type: boolean\n      session_minutes"));
     });

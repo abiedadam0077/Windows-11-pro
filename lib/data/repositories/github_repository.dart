@@ -207,6 +207,11 @@ class GitHubRepository {
         perPage: 50,
       );
 
+  /// Asks the running session to shut Windows down and save its backup.
+  /// Unlike cancel, the workflow keeps running long enough to do that.
+  Future<void> requestStop({required String owner, required String repo, required int runId}) =>
+      _api.upsertActionsVariable(owner, repo, AppConfig.stopVariable, runId.toString());
+
   Future<void> cancel({required String owner, required String repo, required int runId}) =>
       _api.cancelRun(owner, repo, runId);
 

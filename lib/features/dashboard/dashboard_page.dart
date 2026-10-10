@@ -589,9 +589,9 @@ class _ActionsWrap extends ConsumerWidget {
       ),
       _ActionChip(
         icon: Icons.stop_circle_outlined,
-        label: s.t('dash_action_cancel'),
+        label: s.t('dash_action_stop'),
         danger: true,
-        onTap: a == null || terminal ? null : () => _cancel(context, ref),
+        onTap: a == null || terminal ? null : () => _stop(context, ref),
         enabled: a != null && !terminal && !session.busy,
       ),
       _ActionChip(
@@ -631,15 +631,16 @@ class _ActionsWrap extends ConsumerWidget {
     }
   }
 
-  Future<void> _cancel(BuildContext context, WidgetRef ref) async {
+  Future<void> _stop(BuildContext context, WidgetRef ref) async {
     final s = context.s;
     final ok = await confirmDialog(
       context,
-      title: s.t('session_cancel_title'),
-      body: s.t('session_cancel_body'),
+      title: s.t('session_stop_title'),
+      body: s.t('session_stop_body'),
+      confirmLabel: s.t('session_stop'),
       destructive: true,
     );
-    if (ok) await ref.read(sessionProvider.notifier).cancelActive();
+    if (ok) await ref.read(sessionProvider.notifier).requestStop();
   }
 }
 

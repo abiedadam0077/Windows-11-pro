@@ -90,6 +90,20 @@ void main() {
       expect(await _kindOf(() => api.jobLogs('o', 'r', 9)), FailureKind.network);
     });
 
+    test('stop request: creates the variable, or updates it when it already exists', () async {
+      final calls = <String>[];
+      final api = _api(github: (o) async {
+        calls.add('${o.method} ${o.uri.path}');
+        if (o.method == 'POST') return _json(422, '{"message":"already exists"}');
+        return _json(204, '');
+      });
+      await api.upsertActionsVariable('o', 'r', 'WINPILOT_STOP_RUN', '42');
+      expect(calls, [
+        'POST /repos/o/r/actions/variables',
+        'PATCH /repos/o/r/actions/variables/WINPILOT_STOP_RUN',
+      ]);
+    });
+
     test('a redirected log is returned as text', () async {
       final api = _api(
         github: (_) async => _json(302, '', headers: {

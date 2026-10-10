@@ -268,7 +268,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
                   style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
                   onPressed: st.busy ? null : _cancel,
                   icon: const Icon(Icons.stop_circle_rounded),
-                  label: Text(s.t('session_cancel')),
+                  label: Text(s.t('session_stop')),
                 ),
               if (phase.isTerminal)
                 GradientButton(
@@ -335,13 +335,13 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
     final s = context.s;
     final ok = await confirmDialog(
       context,
-      title: s.t('session_cancel_title'),
-      body: s.t('session_cancel_body'),
-      confirmLabel: s.t('session_cancel'),
+      title: s.t('session_stop_title'),
+      body: s.t('session_stop_body'),
+      confirmLabel: s.t('session_stop'),
       destructive: true,
     );
     if (!ok) return;
-    await ref.read(sessionProvider.notifier).cancelActive();
+    await ref.read(sessionProvider.notifier).requestStop();
   }
 
   Future<void> _rerun() async {

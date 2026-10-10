@@ -45,6 +45,11 @@ class _AppStringsDelegate extends LocalizationsDelegate<AppStrings> {
 }
 
 const Map<String, String> _en = {
+  'dash_action_stop': 'Stop and save',
+  'session_stop': 'Stop and save',
+  'session_stop_title': 'Stop and save the session?',
+  'session_stop_body': 'Windows will shut down, the disk will be saved, encrypted and uploaded as a backup. This takes several minutes. Keep the app open or check the run later. The run is NOT cancelled, so the backup is kept.',
+  'activity_stop_requested': 'Stop requested. Windows will shut down and the backup will be saved.',
   'ts_page_title': 'Tailscale',
   'ts_status_verified': 'Connected and verified',
   'ts_status_invalid_secret': 'Key format is invalid',
@@ -728,6 +733,11 @@ const Map<String, String> _en = {
 };
 
 const Map<String, String> _ar = {
+  'dash_action_stop': 'إيقاف وحفظ',
+  'session_stop': 'إيقاف وحفظ',
+  'session_stop_title': 'إيقاف الجلسة وحفظها؟',
+  'session_stop_body': 'سيتم إيقاف Windows بشكل سليم، ثم حفظ القرص وتشفيره ورفعه كنسخة احتياطية. قد يستغرق ذلك عدة دقائق. لا يتم إلغاء التشغيل، لذلك تبقى النسخة محفوظة.',
+  'activity_stop_requested': 'تم طلب الإيقاف. سيتم إيقاف Windows وحفظ النسخة الاحتياطية.',
   'ts_page_title': 'Tailscale',
   'ts_status_verified': 'متصل ومُتحقَّق منه',
   'ts_status_invalid_secret': 'صيغة المفتاح غير صحيحة',
