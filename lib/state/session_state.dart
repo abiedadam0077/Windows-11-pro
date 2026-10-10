@@ -283,9 +283,6 @@ class SessionController extends Notifier<SessionState> {
       if (phase == SessionPhase.running) {
         _announce('running', 'notif_started_title', 'notif_started_body');
       }
-      if (phase == SessionPhase.queued && before.phase == SessionPhase.unknown) {
-        // First observation of a queued run: nothing to announce.
-      }
     }
 
     if (d.rdpReady == true) {
@@ -349,12 +346,22 @@ class SessionController extends Notifier<SessionState> {
     );
     final s = AppStrings(Locale(lang));
     unawaited(ref.read(notificationServiceProvider).show(
-          id: active.runId.hashCode ^ event.hashCode,
+          id: _notificationId(active.runId, event),
           title: s.t(titleKey, {'run': '${active.runNumber ?? active.runId}'}),
           body: s.t(bodyKey, {'run': '${active.runNumber ?? active.runId}'}),
           channelName: s.t('notif_channel_name'),
           channelDescription: s.t('notif_channel_desc'),
         ));
+  }
+
+  /// Stable notification id per (run, event). Dart's hashCode is not guaranteed
+  /// to be the same across launches, so a small deterministic hash is used.
+  static int _notificationId(int runId, String event) {
+    var h = 0;
+    for (final unit in event.codeUnits) {
+      h = (h * 31 + unit) & 0xffff;
+    }
+    return ((runId & 0xffffff) << 8 | h) & 0x7fffffff;
   }
 
   void _log(String key, ActivityKind kind, [Map<String, String> args = const {}]) {
