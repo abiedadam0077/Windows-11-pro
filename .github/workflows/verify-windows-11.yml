@@ -1,4 +1,5 @@
 # WinPilot - Windows 11 Pro virtual machine session (managed by the WinPilot app).
+# winpilot-workflow-revision: 2
 #
 # How it works
 # - Runs Windows 11 Pro (x64) inside Docker with KVM, using the open-source dockur/windows

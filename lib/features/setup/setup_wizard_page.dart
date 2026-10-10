@@ -81,7 +81,11 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
       return out;
     }
     if (r == null) return out;
-    if (!r.workflowExists) out.add('setup_missing_workflow');
+    if (!r.workflowExists) {
+      out.add('setup_missing_workflow');
+    } else if (!r.workflowCurrent) {
+      out.add('setup_outdated_workflow');
+    }
     if (r.blockers.isNotEmpty) out.add('setup_missing_blockers');
     if (!Validators.isValidWindowsUsername(_userCtrl.text.trim())) out.add('setup_missing_user');
     if (_enableRdp) {
@@ -93,7 +97,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
 
   bool _canContinue(RepoSummary? repo, RepoReadiness? r) {
     return switch (_step) {
-      0 => repo != null && r != null && r.canStart && r.workflowExists,
+      0 => repo != null && r != null && r.canStart && r.workflowCurrent,
       1 => Validators.isValidWindowsUsername(_userCtrl.text.trim()) &&
           (!_enableRdp || (_pwViolations().isEmpty && _effectivePwSecret(r) != false)),
       2 => true,
@@ -424,9 +428,11 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
                   r.actionsEnabled,
                   r.actionsEnabled == true ? s.t('setup_actions_on') : s.t('setup_actions_unknown'),
                 ),
-                _check(r.workflowExists, r.workflowExists
+                _check(r.workflowCurrent, r.workflowCurrent
                     ? s.t('setup_workflow_found', {'path': ref.read(settingsProvider).workflowPath})
-                    : s.t('setup_workflow_missing', {'path': ref.read(settingsProvider).workflowPath})),
+                    : r.workflowExists
+                        ? s.t('setup_workflow_outdated', {'path': ref.read(settingsProvider).workflowPath})
+                        : s.t('setup_workflow_missing', {'path': ref.read(settingsProvider).workflowPath})),
                 _check(
                   r.passwordSecret,
                   secretText(AppConfig.windowsPasswordSecret, r.passwordSecret),
@@ -440,10 +446,10 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
           ),
           for (final key in r.blockers) _Notice(text: s.t(key), color: AppColors.danger),
           for (final key in r.warnings) _Notice(text: s.t(key), color: AppColors.warning),
-          if (!r.workflowExists) ...[
+          if (!r.workflowCurrent) ...[
             const SizedBox(height: 12),
             GradientButton(
-              label: s.t('setup_workflow_install'),
+              label: s.t(r.workflowExists ? 'setup_workflow_update' : 'setup_workflow_install'),
               icon: Icons.upload_file_rounded,
               loading: _installing,
               onPressed: _installing || !r.canStart ? null : () => _installWorkflow(repo, r),

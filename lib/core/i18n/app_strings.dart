@@ -45,6 +45,9 @@ class _AppStringsDelegate extends LocalizationsDelegate<AppStrings> {
 }
 
 const Map<String, String> _en = {
+  'setup_outdated_workflow': 'The installed workflow is an older version. Update it before starting a session.',
+  'setup_workflow_outdated': 'Workflow at {path} is an older version and must be updated.',
+  'setup_workflow_update': 'Update workflow',
   'stage_queued': 'Queued',
   'stage_starting': 'Starting',
   'stage_waiting_windows': 'Waiting for Windows',
@@ -740,6 +743,9 @@ const Map<String, String> _en = {
 };
 
 const Map<String, String> _ar = {
+  'setup_outdated_workflow': 'ملف التشغيل المثبّت نسخة قديمة. حدّثه قبل بدء أي جلسة.',
+  'setup_workflow_outdated': 'ملف التشغيل في {path} نسخة قديمة ويجب تحديثه.',
+  'setup_workflow_update': 'تحديث ملف التشغيل',
   'stage_queued': 'في الانتظار',
   'stage_starting': 'جارٍ البدء',
   'stage_waiting_windows': 'بانتظار جاهزية Windows',

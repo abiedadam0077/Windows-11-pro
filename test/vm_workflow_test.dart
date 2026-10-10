@@ -80,6 +80,10 @@ void main() {
       expect(text, contains(r'-X DELETE "repos/$GITHUB_REPOSITORY/actions/variables/WINPILOT_STOP_RUN"'));
     });
 
+    test('the template carries the revision marker the app uses to detect outdated copies', () {
+      expect(text, contains('winpilot-workflow-revision: 2'));
+    });
+
     test('Tailscale is opt-in by default', () {
       expect(text, contains("default: false\n        type: boolean\n      session_minutes"));
     });

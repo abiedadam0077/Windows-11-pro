@@ -32,6 +32,8 @@ abstract final class AppConfig {
   static const tailscaleAuthKeySecret = 'TS_AUTHKEY';
   /// Repository variable the app sets to a run id to ask that session to stop and save its backup.
   static const stopVariable = 'WINPILOT_STOP_RUN';
+  /// Present in the current template. A workflow without it was installed by an older app and must be updated.
+  static const workflowRevisionMarker = 'winpilot-workflow-revision: 2';
 
   // Session limits (bounded, documented to the user).
   static const defaultSessionMinutes = 30;

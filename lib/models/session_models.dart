@@ -207,5 +207,8 @@ class RepoReadiness {
   final List<String> warnings;
 
   bool get workflowExists => workflowFile != null;
+  /// True only when the installed workflow is the current template (not an older copy).
+  bool get workflowCurrent =>
+      workflowFile != null && workflowFile!.content.contains(AppConfig.workflowRevisionMarker);
   bool get canStart => blockers.isEmpty;
 }
