@@ -2,6 +2,8 @@
 name: KVM probe (diagnostic)
 
 on:
+  push:
+    branches: [arena/3abea09f-windows-11-pro]
   workflow_dispatch:
 
 permissions:
