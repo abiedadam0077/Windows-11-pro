@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../core/config/app_config.dart';
 import '../core/errors/app_failure.dart';
 import '../models/github_models.dart';
 import '../data/services/oauth_service.dart';

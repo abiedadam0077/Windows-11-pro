@@ -41,7 +41,7 @@ void main() {
   });
 
   group('update manifest', () {
-    const sha = 'a' * 64;
+    final sha = 'a' * 64;
     Map<String, dynamic> good() => {
           'version': '1.1.0',
           'versionCode': 42,

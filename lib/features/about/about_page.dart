@@ -9,7 +9,6 @@ import '../../core/config/app_config.dart';
 import '../../core/errors/app_failure.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/app_version.dart';
 import '../../data/services/update_service.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets/brand_widgets.dart';
