@@ -9,6 +9,7 @@ import '../../core/utils/formatters.dart';
 import '../../models/github_models.dart';
 import '../../models/runner_diagnostics.dart';
 import '../../models/session_phase.dart';
+import '../../models/session_stage.dart';
 import '../../state/providers.dart';
 import '../../state/session_state.dart';
 import '../../ui/widgets/brand_widgets.dart';
@@ -112,7 +113,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
                       child: Text(active.repoFullName,
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
                     ),
-                    PhaseBadge(phase: phase),
+                    SessionStageBadge(stage: deriveSessionStage(phase, diag)),
                   ]),
                   const SizedBox(height: 8),
                   Text(

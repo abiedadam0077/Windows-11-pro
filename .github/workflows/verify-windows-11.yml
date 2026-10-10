@@ -406,7 +406,7 @@ jobs:
           echo "WINPILOT|RDP_PORT_OPEN=$rdp_ready"
           echo "WINPILOT|RDP_HANDSHAKE=$rdp_ready"
           echo "WINPILOT|WINDOWS_READY=true"
-          echo "WINPILOT|RDP_READY=$ENABLE_RDP"
+          echo "WINPILOT|RDP_REQUESTED=$ENABLE_RDP"
           echo "WINPILOT|READY_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: 'WinPilot: join Tailscale'

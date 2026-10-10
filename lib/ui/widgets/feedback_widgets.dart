@@ -6,6 +6,7 @@ import '../../core/i18n/app_strings.dart';
 import '../../core/security/redactor.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/session_phase.dart';
+import '../../models/session_stage.dart';
 import 'brand_widgets.dart';
 
 Color phaseColor(SessionPhase phase) => switch (phase) {
@@ -35,6 +36,34 @@ class PhaseBadge extends StatelessWidget {
     final s = context.s;
     final color = phaseColor(phase);
     return StatusChip(label: s.t(phase.labelKey), color: color, icon: phaseIcon(phase));
+  }
+}
+
+/// Session stage as the user sees it (Queued, Starting, Waiting for Windows, Running, ...).
+class SessionStageBadge extends StatelessWidget {
+  const SessionStageBadge({super.key, required this.stage});
+
+  final SessionStage stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final color = switch (stage) {
+      SessionStage.queued => AppColors.warning,
+      SessionStage.starting || SessionStage.waitingForWindows => AppColors.warning,
+      SessionStage.running || SessionStage.savingBackup => AppColors.electricBlue,
+      SessionStage.completed => AppColors.success,
+      SessionStage.failed => AppColors.danger,
+    };
+    final icon = switch (stage) {
+      SessionStage.queued => Icons.hourglass_top_rounded,
+      SessionStage.starting || SessionStage.waitingForWindows => Icons.pending_rounded,
+      SessionStage.running => Icons.desktop_windows_rounded,
+      SessionStage.savingBackup => Icons.backup_rounded,
+      SessionStage.completed => Icons.check_circle_rounded,
+      SessionStage.failed => Icons.error_rounded,
+    };
+    return StatusChip(label: s.t(stage.labelKey), color: color, icon: icon);
   }
 }
 

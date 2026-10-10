@@ -11,6 +11,7 @@ import '../../core/utils/validators.dart';
 import '../../models/runner_diagnostics.dart';
 import '../../models/session_models.dart';
 import '../../models/session_phase.dart';
+import '../../models/session_stage.dart';
 import '../../state/auth_state.dart';
 import '../../state/providers.dart';
 import '../../state/session_state.dart';
@@ -352,7 +353,7 @@ class _ActiveCard extends ConsumerWidget {
         children: [
           Row(
             children: [
-              PhaseBadge(phase: phase),
+              SessionStageBadge(stage: deriveSessionStage(phase, diag)),
               const Spacer(),
               Text(s.t('session_run', {'n': '${active.runNumber ?? active.runId}'}),
                   style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted)),

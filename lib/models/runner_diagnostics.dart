@@ -124,7 +124,7 @@ class RunnerDiagnostics {
       diagnosticsOk: values['DIAGNOSTICS'] == 'ok',
       rdpRequested: flag('RDP_REQUESTED') ?? (values.containsKey('RDP_CONFIGURED') ? true : null),
       rdpUserReady: flag('RDP_USER_READY'),
-      rdpReady: flag('RDP_READY'),
+      rdpReady: flag('RDP_HANDSHAKE'),
       rdpReason: values['RDP_REASON'],
       rdpPortListening: flag('RDP_PORT_LISTENING'),
       tailscaleState: values['TS_STATE'],

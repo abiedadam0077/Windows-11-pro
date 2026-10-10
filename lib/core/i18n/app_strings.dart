@@ -45,6 +45,13 @@ class _AppStringsDelegate extends LocalizationsDelegate<AppStrings> {
 }
 
 const Map<String, String> _en = {
+  'stage_queued': 'Queued',
+  'stage_starting': 'Starting',
+  'stage_waiting_windows': 'Waiting for Windows',
+  'stage_running': 'Running',
+  'stage_saving_backup': 'Saving backup',
+  'stage_completed': 'Completed',
+  'stage_failed': 'Failed',
   'dash_action_stop': 'Stop and save',
   'session_stop': 'Stop and save',
   'session_stop_title': 'Stop and save the session?',
@@ -733,6 +740,13 @@ const Map<String, String> _en = {
 };
 
 const Map<String, String> _ar = {
+  'stage_queued': 'في الانتظار',
+  'stage_starting': 'جارٍ البدء',
+  'stage_waiting_windows': 'بانتظار جاهزية Windows',
+  'stage_running': 'Windows يعمل',
+  'stage_saving_backup': 'حفظ النسخة الاحتياطية',
+  'stage_completed': 'اكتمل',
+  'stage_failed': 'فشل',
   'dash_action_stop': 'إيقاف وحفظ',
   'session_stop': 'إيقاف وحفظ',
   'session_stop_title': 'إيقاف الجلسة وحفظها؟',
