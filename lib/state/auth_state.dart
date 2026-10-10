@@ -11,6 +11,7 @@ import '../models/github_models.dart';
 import '../data/services/oauth_service.dart';
 import 'providers.dart';
 import 'session_state.dart';
+import 'settings_state.dart';
 
 enum AuthStatus { unknown, signedOut, signingIn, signedIn, expired, failed }
 

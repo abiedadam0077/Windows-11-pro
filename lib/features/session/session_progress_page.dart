@@ -3,12 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/errors/app_failure.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../models/github_models.dart';
-import '../../models/session_models.dart';
 import '../../models/runner_diagnostics.dart';
 import '../../models/session_phase.dart';
 import '../../state/providers.dart';

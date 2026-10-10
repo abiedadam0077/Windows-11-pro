@@ -11,7 +11,9 @@ import '../data/services/notification_service.dart';
 import '../data/services/oauth_service.dart';
 import '../data/services/rdp_service.dart';
 import '../models/github_models.dart';
+import '../models/session_models.dart';
 import 'auth_state.dart';
+import 'settings_state.dart';
 
 /// Overridden in `main()` with the preloaded instance.
 final sharedPreferencesProvider = Provider<SharedPreferences>(

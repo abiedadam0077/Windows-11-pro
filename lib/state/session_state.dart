@@ -7,7 +7,6 @@ import '../core/config/app_config.dart';
 import '../core/errors/app_failure.dart';
 import '../core/i18n/app_strings.dart';
 import '../core/utils/validators.dart';
-import '../models/github_models.dart';
 import '../models/session_models.dart';
 import '../models/session_phase.dart';
 import 'providers.dart';
