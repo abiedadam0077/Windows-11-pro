@@ -4,6 +4,7 @@ import '../../core/security/redactor.dart';
 import '../../models/github_models.dart';
 import '../../models/runner_diagnostics.dart';
 import '../../models/session_models.dart';
+import '../../models/session_phase.dart';
 import '../services/github_api.dart';
 
 /// Business operations built on [GitHubApi]: readiness checks, workflow

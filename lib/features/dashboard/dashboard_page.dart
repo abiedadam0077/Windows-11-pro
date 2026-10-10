@@ -155,7 +155,7 @@ class DashboardPage extends ConsumerWidget {
     final started = active?.startedAt;
     final elapsed = started == null ? null : now.difference(started);
     final endsAt = diag.sessionEndsAt;
-    final remaining = endsAt == null ? null : endsAt.difference(now);
+    final remaining = endsAt?.difference(now);
 
     return [
       _StatusTile(
@@ -395,7 +395,7 @@ class _ActiveCard extends ConsumerWidget {
                 ),
               ),
               Text(
-                s.t('session_updated') + ': ' + formatTime(session.lastRefresh),
+                '${s.t('session_updated')}: ${formatTime(session.lastRefresh)}',
                 style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
               ),
             ],

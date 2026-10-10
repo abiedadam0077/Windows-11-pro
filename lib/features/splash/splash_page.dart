@@ -7,7 +7,6 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../state/auth_state.dart';
-import '../../state/providers.dart';
 import '../../state/settings_state.dart';
 import '../../ui/widgets/brand_widgets.dart';
 

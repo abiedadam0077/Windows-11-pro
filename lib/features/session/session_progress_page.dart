@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../models/github_models.dart';
 import '../../models/session_models.dart';
+import '../../models/runner_diagnostics.dart';
 import '../../models/session_phase.dart';
 import '../../state/providers.dart';
 import '../../state/session_state.dart';
@@ -267,7 +268,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
               if (phase.isActive)
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
-                  onPressed: st.busy ? null : () => _cancel(context),
+                  onPressed: st.busy ? null : _cancel,
                   icon: const Icon(Icons.stop_circle_rounded),
                   label: Text(s.t('session_cancel')),
                 ),
@@ -276,7 +277,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
                   label: s.t('session_rerun'),
                   icon: Icons.replay_rounded,
                   loading: st.busy,
-                  onPressed: st.busy ? null : () => _rerun(context),
+                  onPressed: st.busy ? null : _rerun,
                 ),
             ]),
             if (phase.isTerminal) ...[
@@ -332,7 +333,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
     };
   }
 
-  Future<void> _cancel(BuildContext context) async {
+  Future<void> _cancel() async {
     final s = context.s;
     final ok = await confirmDialog(
       context,
@@ -345,7 +346,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
     await ref.read(sessionProvider.notifier).cancelActive();
   }
 
-  Future<void> _rerun(BuildContext context) async {
+  Future<void> _rerun() async {
     final before = ref.read(sessionProvider).active?.runId;
     await ref.read(sessionProvider.notifier).rerunActive();
     if (!mounted) return;

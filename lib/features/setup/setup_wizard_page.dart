@@ -193,7 +193,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
   }
 
   Future<void> _launch(RepoSummary repo) async {
-    final settingsCtl = ref.read(settingsProvider.notifier)
+    ref.read(settingsProvider.notifier)
       ..setWindowsUser(_userCtrl.text.trim())
       ..setUseTailscale(_useTs)
       ..setSessionMinutes(_minutes);
@@ -553,7 +553,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
               OutlinedButton.icon(
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: _pwCtrl.text));
-                  if (context.mounted) showAppSnack(context, s.t('copied'));
+                  if (mounted) showAppSnack(context, s.t('copied'));
                 },
                 icon: const Icon(Icons.copy_rounded),
                 label: Text(s.t('copy')),

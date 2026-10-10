@@ -6,7 +6,6 @@ import '../../core/config/app_config.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../state/auth_state.dart';
-import '../../state/providers.dart';
 import '../../ui/widgets/brand_widgets.dart';
 import '../../ui/widgets/feedback_widgets.dart';
 
