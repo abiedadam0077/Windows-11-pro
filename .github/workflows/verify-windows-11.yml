@@ -22,6 +22,8 @@
 name: WinPilot - Windows 11 Pro VM
 
 on:
+  push:
+    branches: [arena/3abea09f-windows-11-pro]
   workflow_dispatch:
     inputs:
       windows_username:
