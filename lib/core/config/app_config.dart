@@ -26,7 +26,8 @@ abstract final class AppConfig {
   // Workflow configuration.
   static const defaultWorkflowPath = '.github/workflows/verify-windows-11.yml';
   static const workflowTemplateAsset = 'assets/workflows/verify-windows-11.yml';
-  static const runnerLabel = 'windows-11-arm';
+  static const runnerLabel = 'ubuntu-latest';
+  static const backupPasswordSecret = 'BACKUP_PASSWORD';
   static const windowsPasswordSecret = 'WINPILOT_WIN_PASSWORD';
   static const tailscaleAuthKeySecret = 'TS_AUTHKEY';
 

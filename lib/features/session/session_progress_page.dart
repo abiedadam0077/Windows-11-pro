@@ -192,7 +192,7 @@ class _SessionProgressPageState extends ConsumerState<SessionProgressPage> {
                     value: diag.architecture ?? '—',
                     valueColor: diag.architecture == null
                         ? null
-                        : diag.isArm64
+                        : diag.isX64
                             ? AppColors.success
                             : AppColors.danger,
                   ),

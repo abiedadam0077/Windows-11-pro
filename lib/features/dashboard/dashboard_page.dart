@@ -190,8 +190,8 @@ class DashboardPage extends ConsumerWidget {
       _StatusTile(
         icon: Icons.memory_rounded,
         label: s.t('dash_card_arch'),
-        value: diag.isArm64 ? s.t('dash_arch_verified') : s.t('dash_arch_unknown'),
-        color: diag.isArm64 ? AppColors.success : AppColors.textMuted,
+        value: diag.isX64 ? s.t('dash_arch_verified') : s.t('dash_arch_unknown'),
+        color: diag.isX64 ? AppColors.success : AppColors.textMuted,
       ),
       _StatusTile(
         icon: Icons.schedule_rounded,

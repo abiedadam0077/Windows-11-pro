@@ -48,7 +48,7 @@ class RunnerDiagnostics {
   final String? error;
 
   bool get hasAnyData => osName != null || architecture != null || tailscaleState != null || rdpReady != null;
-  bool get isArm64 => architecture?.toUpperCase() == 'ARM64';
+  bool get isX64 => const {'X64', 'AMD64'}.contains(architecture?.toUpperCase());
   bool get isWindows11 => osName?.contains('Windows 11') ?? false;
 
   static const _prefix = 'WINPILOT|';
