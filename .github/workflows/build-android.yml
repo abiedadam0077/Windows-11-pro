@@ -23,6 +23,8 @@ jobs:
   build:
     name: Analyze, test and build release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # only used by the optional pre-release step
     timeout-minutes: 60
     steps:
       - name: Checkout
