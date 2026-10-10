@@ -62,6 +62,18 @@ jobs:
           cp -r /tmp/wp_gen/android ./android
           tool/ci/run_logged.sh patch python3 tool/ci/patch_android.py android
 
+      - name: Check i18n keys
+        run: tool/ci/run_logged.sh i18n python3 tool/check_i18n_keys.py
+
+      - name: Resolve dependencies
+        run: tool/ci/run_logged.sh pub-get flutter pub get
+
+      - name: Analyze
+        run: tool/ci/run_logged.sh analyze flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: tool/ci/run_logged.sh test flutter test --reporter expanded
+
       - name: Check release signing secrets
         env:
           KS_B64: ${{ secrets.WINPILOT_KEYSTORE_B64 }}
@@ -103,18 +115,6 @@ jobs:
           grep -E 'SHA256:' keystore-info.txt | head -1 | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f' > expected-cert-sha256.txt
           test -s expected-cert-sha256.txt
           echo "Keystore alias $KEY_ALIAS opens. Expected certificate SHA-256 recorded."
-
-      - name: Check i18n keys
-        run: tool/ci/run_logged.sh i18n python3 tool/check_i18n_keys.py
-
-      - name: Resolve dependencies
-        run: tool/ci/run_logged.sh pub-get flutter pub get
-
-      - name: Analyze
-        run: tool/ci/run_logged.sh analyze flutter analyze --no-fatal-infos
-
-      - name: Test
-        run: tool/ci/run_logged.sh test flutter test --reporter expanded
 
       - name: Build signed release APK
         env:
