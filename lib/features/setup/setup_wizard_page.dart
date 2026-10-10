@@ -435,7 +435,7 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
                         : s.t('setup_workflow_missing', {'path': ref.read(settingsProvider).workflowPath})),
                 _check(
                   r.passwordSecret,
-                  secretText(AppConfig.windowsPasswordSecret, r.passwordSecret),
+                  secretText(AppConfig.accessPasswordSecret, r.passwordSecret),
                 ),
                 _check(
                   r.tailscaleSecret,
@@ -588,10 +588,10 @@ class _SetupWizardPageState extends ConsumerState<SetupWizardPage> {
               _check(
                 pwSecret,
                 pwSecret == null
-                    ? s.t('setup_secret_unknown', {'name': AppConfig.windowsPasswordSecret})
+                    ? s.t('setup_secret_unknown', {'name': AppConfig.accessPasswordSecret})
                     : pwSecret
-                        ? s.t('setup_secret_present', {'name': AppConfig.windowsPasswordSecret})
-                        : s.t('setup_secret_missing', {'name': AppConfig.windowsPasswordSecret}),
+                        ? s.t('setup_secret_present', {'name': AppConfig.accessPasswordSecret})
+                        : s.t('setup_secret_missing', {'name': AppConfig.accessPasswordSecret}),
               ),
               if (repo != null)
                 OutlinedButton.icon(

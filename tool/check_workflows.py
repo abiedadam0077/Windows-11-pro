@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 VM = ROOT / "assets/workflows/verify-windows-11.yml"
 VM_COPY = ROOT / ".github/workflows/verify-windows-11.yml"
 WORKFLOWS = sorted((ROOT / ".github/workflows").glob("*.yml"))
-REQUIRED_SECRETS = ["WINPILOT_WIN_PASSWORD", "BACKUP_PASSWORD", "ACCESS_PASSWORD"]
+REQUIRED_SECRETS = ["BACKUP_PASSWORD", "ACCESS_PASSWORD"]
+# TS_AUTHKEY is optional (Tailscale only). Old names must never reappear.
+FORBIDDEN_SECRET_NAMES = ["WINPILOT_WIN_PASSWORD", "TAILSCALE_AUTHKEY"]
 errors: list[str] = []
 
 
@@ -46,7 +48,7 @@ def check_yaml_and_shell(path: Path) -> dict:
                 fail(f"{path.name} job {job_id} step {i} ({step.get('name')}): bash -n: {res.stderr.strip()}")
             # Secrets must not be echoed or printed in clear.
             for line in run.splitlines():
-                if re.search(r"\becho\b.*\$\{?(WINPILOT_WIN_PASSWORD|WIN_PASSWORD|BACKUP_PASSWORD|ACCESS_PASSWORD|TS_AUTHKEY)\b", line) \
+                if re.search(r"\becho\b.*\$\{?(BACKUP_PASSWORD|ACCESS_PASSWORD|TS_AUTHKEY)\b", line) \
                    and "::add-mask::" not in line and "PASSWORD=" not in line:
                     fail(f"{path.name} job {job_id} step {i}: secret echoed: {line.strip()[:80]}")
     return doc
@@ -62,6 +64,11 @@ def main() -> int:
     for name in REQUIRED_SECRETS:
         if f"secrets.{name}" not in text:
             fail(f"VM workflow does not read secrets.{name}")
+    for name in FORBIDDEN_SECRET_NAMES:
+        if name in text:
+            fail(f"VM workflow still uses the old secret name {name}")
+    if "secrets.TS_AUTHKEY" not in text:
+        fail("VM workflow must read the optional secrets.TS_AUTHKEY")
     if "127.0.0.1:8006:8006" not in text:
         fail("VM workflow must bind the web viewer to 127.0.0.1 only")
     if "--env-file" not in text:

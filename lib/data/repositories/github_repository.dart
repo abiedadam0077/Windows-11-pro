@@ -39,7 +39,7 @@ class GitHubRepository {
     final file = await _api.getFile(repo.owner, repo.name, workflowPath, ref: repo.defaultBranch);
     if (file == null) warnings.add('warn_workflow_missing');
 
-    final password = await _api.secretExists(repo.owner, repo.name, AppConfig.windowsPasswordSecret);
+    final password = await _api.secretExists(repo.owner, repo.name, AppConfig.accessPasswordSecret);
     final tailscale = await _api.secretExists(repo.owner, repo.name, AppConfig.tailscaleAuthKeySecret);
     if (password == null) warnings.add('warn_secret_unknown');
 
@@ -56,7 +56,7 @@ class GitHubRepository {
   }
 
   Future<RepoSecretsStatus> secretsStatus(RepoSummary repo) async => RepoSecretsStatus(
-        password: await _api.secretExists(repo.owner, repo.name, AppConfig.windowsPasswordSecret),
+        password: await _api.secretExists(repo.owner, repo.name, AppConfig.accessPasswordSecret),
         tailscale: await _api.secretExists(repo.owner, repo.name, AppConfig.tailscaleAuthKeySecret),
       );
 

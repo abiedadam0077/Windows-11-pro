@@ -50,9 +50,10 @@ Inside the app, **Settings → About** shows the installed version and checks fo
    The build fails on purpose when these secrets are missing; it never falls back to a debug key.
 4. **Per-session secrets** – in each repository you run sessions in, add these GitHub Actions secrets. Never put them
    in the app, the APK, settings or logs:
-   - `WINPILOT_WIN_PASSWORD` – password for the Windows user (required only when RDP is enabled; 12+ characters with upper, lower, digit and symbol).
-   - `TS_AUTHKEY` – Tailscale auth key (required only when Tailscale is enabled).
-   The app only checks whether these secret names exist.
+   - `BACKUP_PASSWORD` – encrypts and decrypts the Windows disk backups (required; at least 16 characters). Losing it makes existing backups unreadable.
+   - `ACCESS_PASSWORD` – the password of the Windows account AND of the protected browser page (required; 12+ characters with upper, lower, digit and symbol).
+   - `TS_AUTHKEY` – Tailscale auth key (optional; only needed for RDP over Tailscale).
+   The app writes these secrets through the GitHub API (encrypted with the repository public key, libsodium sealed box). It then checks that each name exists. Old names such as `WINPILOT_WIN_PASSWORD` and `TAILSCALE_AUTHKEY` are not used any more and can be deleted.
 
 ## Updating the app and signing
 

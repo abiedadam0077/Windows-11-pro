@@ -31,25 +31,21 @@ class SecretsPage extends ConsumerStatefulWidget {
 
 enum SecretSaveState { idle, saving, saved, failed }
 
-const _kWinPassword = 'WINPILOT_WIN_PASSWORD';
 const _kBackupPassword = 'BACKUP_PASSWORD';
 const _kAccessPassword = 'ACCESS_PASSWORD';
 const _kTsKey = 'TS_AUTHKEY';
 
 class _SecretsPageState extends ConsumerState<SecretsPage> {
   late final TextEditingController _user;
-  final _winPw = TextEditingController();
   final _backupPw = TextEditingController();
   final _accessPw = TextEditingController();
   final _tsPw = TextEditingController();
   final _shown = <String, bool>{
-    _kWinPassword: false,
     _kBackupPassword: false,
     _kAccessPassword: false,
     _kTsKey: false,
   };
   final _state = <String, SecretSaveState>{
-    _kWinPassword: SecretSaveState.idle,
     _kBackupPassword: SecretSaveState.idle,
     _kAccessPassword: SecretSaveState.idle,
     _kTsKey: SecretSaveState.idle,
@@ -66,7 +62,6 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
   @override
   void dispose() {
     _user.dispose();
-    _winPw.dispose();
     _backupPw.dispose();
     _accessPw.dispose();
     _tsPw.dispose();
@@ -74,7 +69,6 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
   }
 
   TextEditingController _controller(String name) => switch (name) {
-        _kWinPassword => _winPw,
         _kBackupPassword => _backupPw,
         _kTsKey => _tsPw,
         _ => _accessPw,
@@ -87,13 +81,10 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
     if (!Validators.isValidWindowsUsername(_user.text.trim())) {
       return s.t('secrets_username_invalid');
     }
-    if (PasswordPolicy.violations(_winPw.text, username: _user.text.trim()).isNotEmpty) {
-      return s.t('secrets_password_weak');
-    }
     if (PasswordPolicy.violations(_backupPw.text).isNotEmpty) {
       return s.t('secrets_backup_weak');
     }
-    if (PasswordPolicy.violations(_accessPw.text).isNotEmpty) {
+    if (PasswordPolicy.violations(_accessPw.text, username: _user.text.trim()).isNotEmpty) {
       return s.t('secrets_access_weak');
     }
     if (_tsPw.text.trim().isNotEmpty && !Validators.isValidTailscaleAuthKey(_tsPw.text)) {
@@ -117,7 +108,7 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
       _error = null;
     });
     // Only secrets not yet confirmed are written, so a retry does not re-send the others.
-    for (final name in [_kWinPassword, _kBackupPassword, _kAccessPassword, _kTsKey]) {
+    for (final name in [_kBackupPassword, _kAccessPassword, _kTsKey]) {
       if (_state[name] == SecretSaveState.saved) continue;
       // TS_AUTHKEY is optional: skipped unless the user typed one.
       if (name == _kTsKey && _tsPw.text.trim().isEmpty) continue;
@@ -292,12 +283,6 @@ class _SecretsPageState extends ConsumerState<SecretsPage> {
               ),
             ),
             const SizedBox(height: 12),
-            _passwordCard(
-              s,
-              name: _kWinPassword,
-              title: s.t('secrets_win_title'),
-              description: s.t('secrets_win_desc'),
-            ),
             SectionTitle(s.t('secrets_backup_section')),
             _passwordCard(
               s,

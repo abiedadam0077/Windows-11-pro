@@ -14,7 +14,7 @@ void main() {
     });
 
     test('reads all three secrets through env, never on the command line', () {
-      for (final name in ['WINPILOT_WIN_PASSWORD', 'BACKUP_PASSWORD', 'ACCESS_PASSWORD']) {
+      for (final name in ['BACKUP_PASSWORD', 'ACCESS_PASSWORD']) {
         expect(text, contains('secrets.$name'));
       }
       expect(text, contains('--env-file'));
@@ -82,6 +82,17 @@ void main() {
 
     test('the template carries the revision marker the app uses to detect outdated copies', () {
       expect(text, contains('winpilot-workflow-revision: 3'));
+    });
+
+    test('fresh install is an explicit input that skips the restore', () {
+      expect(text, contains('fresh_install:'));
+      expect(text, contains(r"FRESH_INSTALL: ${{ inputs.fresh_install && 'true' || 'false' }}"));
+      expect(text, contains('fresh_install requested'));
+    });
+
+    test('one password secret for Windows and the web page, with the same complexity rule', () {
+      expect(text, isNot(contains('WINPILOT_WIN_PASSWORD')));
+      expect(text, contains('ACCESS_PASSWORD must be 12-127 characters'));
     });
 
     test('Tailscale is opt-in by default', () {

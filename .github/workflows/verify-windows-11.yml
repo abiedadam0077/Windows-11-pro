@@ -6,7 +6,7 @@
 #   image: https://github.com/dockur/windows
 # - Runner: ubuntu-latest. KVM is checked at the start of every run. The job fails if /dev/kvm
 #   is missing; there is no silent fallback. KVM on hosted runners is NOT guaranteed.
-# - Windows user and password come from the repository secret WINPILOT_WIN_PASSWORD and are
+# - Windows user and password come from the repository secret ACCESS_PASSWORD (the same password also protects the web page) and are
 #   passed to the VM at first install only. They are masked in logs.
 # - The VM disk is saved at the end of every session as an encrypted backup (BACKUP_PASSWORD)
 #   in a pre-release named win-backup-*. The newest valid backups are restored next time.
@@ -52,6 +52,11 @@ on:
         required: false
         default: '60'
         type: string
+      fresh_install:
+        description: 'DANGER: ignore the saved backups and install a NEW clean Windows (the newest backups are still kept for 2 sessions)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write  # create and prune backup pre-releases
@@ -78,7 +83,6 @@ jobs:
     steps:
       - name: 'WinPilot: check inputs and secrets'
         env:
-          WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
           BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
           ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
@@ -94,16 +98,6 @@ jobs:
           if ! [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] || [ "$SESSION_MINUTES" -lt 5 ] || [ "$SESSION_MINUTES" -gt 120 ]; then
             echo "WINPILOT|ERROR=invalid_session_minutes"; echo "::error::session_minutes must be 5-120."; exit 1
           fi
-          if [ -z "$WIN_PASSWORD" ]; then
-            echo "WINPILOT|ERROR=missing_password_secret"
-            echo "::error::Secret WINPILOT_WIN_PASSWORD is missing. Set it in repository settings or from WinPilot."; exit 1
-          fi
-          echo "::add-mask::$WIN_PASSWORD"
-          if [ "${#WIN_PASSWORD}" -lt 12 ] || [ "${#WIN_PASSWORD}" -gt 127 ] || [[ "$WIN_PASSWORD" =~ [[:cntrl:]] ]] \
-             || ! [[ "$WIN_PASSWORD" =~ [A-Z] && "$WIN_PASSWORD" =~ [a-z] && "$WIN_PASSWORD" =~ [0-9] && "$WIN_PASSWORD" =~ [^A-Za-z0-9] ]]; then
-            echo "WINPILOT|ERROR=weak_password_secret"
-            echo "::error::WINPILOT_WIN_PASSWORD must be 12-127 characters with upper, lower, digit and symbol, without control characters."; exit 1
-          fi
           if [ -z "$BACKUP_PASSWORD" ]; then
             echo "WINPILOT|ERROR=missing_backup_secret"
             echo "::error::Secret BACKUP_PASSWORD is missing. Backups cannot be encrypted without it."; exit 1
@@ -113,12 +107,14 @@ jobs:
             echo "WINPILOT|ERROR=weak_backup_secret"; echo "::error::BACKUP_PASSWORD must be at least 16 characters."; exit 1
           fi
           if [ -z "$ACCESS_PASSWORD" ]; then
-            echo "WINPILOT|ERROR=missing_access_secret"
-            echo "::error::Secret ACCESS_PASSWORD is missing. The browser access page cannot be protected without it."; exit 1
+            echo "WINPILOT|ERROR=missing_password_secret"
+            echo "::error::Secret ACCESS_PASSWORD is missing. Set it in repository settings or from WinPilot. It is the Windows and web page password."; exit 1
           fi
           echo "::add-mask::$ACCESS_PASSWORD"
-          if [ "${#ACCESS_PASSWORD}" -lt 12 ]; then
-            echo "WINPILOT|ERROR=weak_access_secret"; echo "::error::ACCESS_PASSWORD must be at least 12 characters."; exit 1
+          if [ "${#ACCESS_PASSWORD}" -lt 12 ] || [ "${#ACCESS_PASSWORD}" -gt 127 ] || [[ "$ACCESS_PASSWORD" =~ [[:cntrl:]] ]] \
+             || ! [[ "$ACCESS_PASSWORD" =~ [A-Z] && "$ACCESS_PASSWORD" =~ [a-z] && "$ACCESS_PASSWORD" =~ [0-9] && "$ACCESS_PASSWORD" =~ [^A-Za-z0-9] ]]; then
+            echo "WINPILOT|ERROR=weak_password_secret"
+            echo "::error::ACCESS_PASSWORD must be 12-127 characters with upper, lower, digit and symbol, without control characters."; exit 1
           fi
           if [ "$USE_TAILSCALE" = "true" ]; then
             if [ -z "$TS_AUTHKEY" ]; then
@@ -163,10 +159,17 @@ jobs:
       - name: 'WinPilot: restore the latest valid backup'
         env:
           BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+          FRESH_INSTALL: ${{ inputs.fresh_install && 'true' || 'false' }}
         run: |
           set -euo pipefail
           echo "WINPILOT|STAGE=restore"
           mkdir -p "$STORE" "$SCRATCH"
+          if [ "$FRESH_INSTALL" = "true" ]; then
+            echo "WINPILOT|MODE=first_install"
+            echo "WINPILOT|STAGE=first_install"
+            echo "fresh_install requested: saved backups are ignored and Windows is installed from scratch."
+            exit 0
+          fi
           sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq zstd >/dev/null
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
             -q '[.[] | select(.tagName | startswith("win-backup-"))] | sort_by(.createdAt) | reverse | .[].tagName' \
@@ -244,7 +247,7 @@ jobs:
 
       - name: 'WinPilot: start Windows 11 Pro VM'
         env:
-          WINPILOT_WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
         run: |
           set -euo pipefail
           echo "WINPILOT|STAGE=vm_start"
@@ -253,7 +256,7 @@ jobs:
           {
             echo "VERSION=11"
             echo "USERNAME=$WIN_USER"
-            echo "PASSWORD=$WINPILOT_WIN_PASSWORD"
+            echo "PASSWORD=$ACCESS_PASSWORD"
             echo "RAM_SIZE=8G"
             echo "CPU_CORES=4"
             echo "DISK_SIZE=64G"
@@ -269,7 +272,7 @@ jobs:
           sleep 5
           if ! docker ps -q --filter "name=$VM_NAME" | grep -q .; then
             echo "WINPILOT|ERROR=vm_container_exited"
-            docker logs --tail 40 "$VM_NAME" 2>&1 | python3 -c 'import sys,os; s=sys.stdin.read(); p=os.environ.get("WINPILOT_WIN_PASSWORD",""); print(s.replace(p,"***") if p else s)' || true
+            docker logs --tail 40 "$VM_NAME" 2>&1 | python3 -c 'import sys,os; s=sys.stdin.read(); p=os.environ.get("ACCESS_PASSWORD",""); print(s.replace(p,"***") if p else s)' || true
             exit 1
           fi
           echo "WINPILOT|VM_CONTAINER=started"
@@ -361,7 +364,7 @@ jobs:
 
       - name: 'WinPilot: wait for Windows readiness'
         env:
-          WINPILOT_WIN_PASSWORD: ${{ secrets.WINPILOT_WIN_PASSWORD }}
+          ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
         run: |
           set -euo pipefail
           echo "WINPILOT|STAGE=windows_boot"
@@ -387,7 +390,7 @@ jobs:
           while [ "$(date +%s)" -lt "$deadline" ]; do
             if ! docker ps -q --filter "name=$VM_NAME" | grep -q .; then
               echo "WINPILOT|ERROR=vm_stopped_before_ready"
-              docker logs --tail 60 "$VM_NAME" 2>&1 | python3 -c 'import sys,os; s=sys.stdin.read(); p=os.environ.get("WINPILOT_WIN_PASSWORD",""); print(s.replace(p,"***") if p else s)' || true
+              docker logs --tail 60 "$VM_NAME" 2>&1 | python3 -c 'import sys,os; s=sys.stdin.read(); p=os.environ.get("ACCESS_PASSWORD",""); print(s.replace(p,"***") if p else s)' || true
               exit 1
             fi
             if [ "$ENABLE_RDP" != "true" ] || python3 "$SCRATCH/rdp_probe.py" 127.0.0.1 2>/dev/null; then
