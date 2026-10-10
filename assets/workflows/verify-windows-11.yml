@@ -58,10 +58,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 340
     env:
-      WIN_USER: ${{ inputs.windows_username }}
-      ENABLE_RDP: ${{ inputs.enable_rdp }}
-      USE_TAILSCALE: ${{ inputs.use_tailscale }}
-      SESSION_MINUTES: ${{ inputs.session_minutes }}
+      WIN_USER: ${{ inputs.windows_username || 'winpilot' }}
+      ENABLE_RDP: ${{ format('{0}', inputs.enable_rdp) == 'false' && 'false' || 'true' }}
+      USE_TAILSCALE: ${{ format('{0}', inputs.use_tailscale) == 'false' && 'false' || 'true' }}
+      SESSION_MINUTES: ${{ inputs.session_minutes || '60' }}
       GH_TOKEN: ${{ github.token }}
       VM_NAME: winpilot-vm
       STORE: /home/runner/winpilot-storage
@@ -254,7 +254,7 @@ jobs:
           echo "WINPILOT|READY_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: 'WinPilot: join Tailscale'
-        if: ${{ inputs.use_tailscale }}
+        if: ${{ format('{0}', inputs.use_tailscale) != 'false' }}
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
