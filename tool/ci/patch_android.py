@@ -65,12 +65,53 @@ def patch_gradle(android_dir: pathlib.Path) -> None:
     print(f'gradle patched: {path}')
 
 
+ROOT_KTS_BLOCK = """// WinPilot (tool/ci/patch_android.py): plugin AARs such as file_picker are compiled against an
+// older API level; AAR metadata checks then fail. Force every subproject onto COMPILE_SDK.
+// This block is placed before the template's evaluationDependsOn(":app") so projects are not yet evaluated.
+subprojects {
+    afterEvaluate {
+        extensions.findByName("android")?.withGroovyBuilder {
+            "compileSdkVersion"(%d)
+        }
+    }
+}
+
+""" % COMPILE_SDK
+
+ROOT_GROOVY_BLOCK = """// WinPilot (tool/ci/patch_android.py): force every subproject onto compileSdk %d.
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android.compileSdkVersion %d
+        }
+    }
+}
+
+""" % (COMPILE_SDK, COMPILE_SDK)
+
+
+def patch_root_gradle(android_dir: pathlib.Path) -> None:
+    kts = android_dir / 'build.gradle.kts'
+    groovy = android_dir / 'build.gradle'
+    if kts.exists():
+        path, block = kts, ROOT_KTS_BLOCK
+    elif groovy.exists():
+        path, block = groovy, ROOT_GROOVY_BLOCK
+    else:
+        sys.exit('no root android/build.gradle(.kts) found')
+    text = path.read_text(encoding='utf-8')
+    if 'WinPilot (tool/ci/patch_android.py)' not in text:
+        path.write_text(block + text, encoding='utf-8')
+    print(f'root gradle patched: {path}')
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     android_dir = pathlib.Path(sys.argv[1]).resolve()
     patch_manifest(android_dir)
     patch_gradle(android_dir)
+    patch_root_gradle(android_dir)
 
 
 if __name__ == '__main__':
