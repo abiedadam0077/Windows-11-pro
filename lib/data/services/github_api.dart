@@ -263,6 +263,32 @@ class GitHubApi {
     }
   }
 
+  /// Repo Actions public key used to encrypt secrets (libsodium sealed box).
+  Future<({String keyId, String key})> actionsPublicKey(String owner, String repo) async {
+    final res = await _send('GET', '/repos/$owner/$repo/actions/secrets/public-key');
+    final data = res.data;
+    if (data is! Map || data['key_id'] == null || data['key'] == null) {
+      throw const AppFailure(FailureKind.server);
+    }
+    return (keyId: data['key_id'].toString(), key: data['key'].toString());
+  }
+
+  /// Creates or updates an Actions secret. [encryptedValue] must already be
+  /// sealed with the repo public key; the plaintext never leaves the device.
+  Future<void> putActionsSecret(
+    String owner,
+    String repo,
+    String name, {
+    required String encryptedValue,
+    required String keyId,
+  }) async {
+    await _send(
+      'PUT',
+      '/repos/$owner/$repo/actions/secrets/$name',
+      data: {'encrypted_value': encryptedValue, 'key_id': keyId},
+    );
+  }
+
   // ---------------------------------------------------------------- workflows
 
   Future<void> dispatchWorkflow({

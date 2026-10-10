@@ -253,6 +253,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ],
             ),
           ),
+          SectionTitle(s.t('secrets_title')),
+          GlassCard(
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.key_rounded),
+              title: Text(s.t('secrets_settings_tile')),
+              subtitle: Text(s.t('secrets_settings_tile_desc')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => context.push('/secrets'),
+            ),
+          ),
+          const SizedBox(height: 12),
           SectionTitle(s.t('settings_legal')),
           GlassCard(
             child: Column(
