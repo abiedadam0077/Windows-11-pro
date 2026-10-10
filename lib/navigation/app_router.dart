@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,7 +18,6 @@ import '../features/settings/settings_page.dart';
 import '../features/setup/setup_wizard_page.dart';
 import '../features/splash/splash_page.dart';
 import '../state/auth_state.dart';
-import '../state/providers.dart';
 import '../state/settings_state.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
